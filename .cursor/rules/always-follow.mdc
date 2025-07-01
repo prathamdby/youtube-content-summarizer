@@ -1,0 +1,134 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# YouTube Content Summarizer - Development Guidelines
+
+## Project Overview
+
+This is a Python 3.12 async Telegram bot that summarizes YouTube videos using Gemini 2.5 Flash AI. Always referenced for complete architectural details.
+
+## Core Tech Stack & Dependencies
+
+- **Python 3.12** with async/await patterns throughout
+- **python-telegram-bot v20+** (Bot API 9.0) - main bot framework
+- **youtube_transcript_api** - transcript fetching (no API key required)
+- **google-generativeai** - official Google GenAI package for Gemini 2.5 Flash
+- **asyncio + aiohttp** for async I/O operations
+- **tenacity** for retry logic and backoff strategies
+- **In-memory LRU caches** only (no external datastores)
+
+## Code Standards & Formatting
+
+- **Always format with Black** - no exceptions
+- **Avoid comments** at all costs - code should be self-documenting
+- **Production-ready code** - every change must be deployment-ready
+- **Follow industry standards** for Python async development
+- **Type hints required** - use TypedDict and proper typing
+
+## Architecture Patterns
+
+The project follows a **single-process async architecture**:
+
+```
+bot.py (entry point)
+├── handlers.py      # command & message routers
+├── youtube.py       # transcript fetch & clean
+├── gemini.py        # Google GenAI wrapper, chunking, backoff
+├── cache.py         # LRUDicts + TTL eviction
+└── utils.py         # validation, logging, metrics
+```
+
+## Core Data Structures
+
+Always use these exact TypedDict definitions:
+
+```python
+Transcript = TypedDict({
+    "text": str,
+    "lang": str,
+    "timestamp": float,
+})
+
+# Cache structure: chat_id → LRU of message_id → Transcript
+Cache: Dict[int, LRUDict[int, Transcript]]
+```
+
+## Async Patterns & Concurrency
+
+- **Everything must be async** - use `async def` and `await`
+- **Semaphore limits**: `asyncio.Semaphore(5)` per external API
+- **Timeouts**: 10s for fetching, 60s for Gemini calls
+- **Exponential backoff** on 429 errors (max 60s)
+- **No blocking operations** in the main event loop
+
+## Error Handling & Robustness
+
+- **Stateless restarts** - RAM-only state, users resend on restart
+- **Early validation** - catch bad URLs/commands immediately
+- **Graceful degradation** - inform users when transcripts unavailable
+- **Memory management** - cap cache at 50MB with LRU eviction
+- **Security**: HTTPS YouTube links only, sanitize all inputs
+
+## Processing Pipeline Rules
+
+1. **URL validation** → extract video_id
+2. **Transcript retrieval** via youtube_transcript_api
+3. **Text cleaning** - strip markers, merge short lines
+4. **Chunking strategy**:
+   - ≤120k tokens → single Gemini call
+   - > 120k tokens → map-reduce with 25k-token chunks
+5. **Caching**: per-chat LRU size 25, TTL 2h
+6. **Follow-up Q&A**: reply detection → transcript + question → Gemini
+
+## Gemini Integration Standards
+
+Always use the official `google.generativeai` package:
+
+```python
+import google.generativeai as genai
+genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+model = genai.GenerativeModel('gemini-2.5-flash')
+```
+
+Key requirements:
+
+- **Temperature 0.3** for consistent summaries
+- **Max 1000 output tokens** for summaries
+- **Built-in retry logic** - don't implement custom retries
+- **Streaming support** for real-time responses
+- **Honor safety filters** - relay sanitized errors only
+
+## File Organization Rules
+
+- **bot.py**: Main entry point and application setup
+- **handlers.py**: All Telegram command and message handlers
+- **youtube.py**: YouTube transcript fetching and text processing
+- **gemini.py**: All AI/Gemini interactions and response handling
+- **cache.py**: LRU cache implementation with TTL
+- **utils.py**: Validation, logging, metrics utilities
+
+## Testing & Deployment
+
+- **Docker deployment** with Alpine + Python slim
+- **Environment variables**: `BOT_TOKEN`, `GEMINI_API_KEY`
+- **Health endpoint**: `/ping` for monitoring
+- **JSON logging** with chat_id, step, latency
+- **Prometheus metrics**: requests, failures, token usage
+
+## Security Requirements
+
+- **Accept HTTPS YouTube links only**
+- **Sanitize inputs** to prevent injection attacks
+- **Reject videos >3 hours**
+- **No sensitive data in logs**
+- **Rate limiting** via semaphores and backoff
+
+## Performance Guidelines
+
+- **≤600 LOC total** - keep codebase lean
+- **Zero external state** - everything in memory
+- **Concurrent processing** - handle 100 parallel requests
+- **Resource limits** - respect memory and API quotas
+- **Graceful shutdown** - no dangling tasks on restart
