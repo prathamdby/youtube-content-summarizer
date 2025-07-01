@@ -1,11 +1,11 @@
 # YouTube Content Summarizer Bot
 
-A fast, efficient Telegram bot that provides AI-powered summaries of YouTube videos using Google's Gemini 2.0 Flash Experimental model. The bot fetches video transcripts and generates comprehensive summaries, with support for follow-up Q&A.
+A fast, efficient Telegram bot that provides AI-powered summaries of YouTube videos using Google's Gemma 3 27B model. The bot fetches video transcripts and generates comprehensive summaries, with support for follow-up Q&A.
 
 ## Features
 
 - 🎥 **Video Summarization**: Get comprehensive summaries of YouTube videos with metadata
-- 🤖 **AI-Powered**: Uses Google Gemini 2.0 Flash Experimental for high-quality summaries
+- 🤖 **AI-Powered**: Uses Google Gemma 3 27B for high-quality summaries
 - 💬 **Interactive Q&A**: Ask follow-up questions about video content with context awareness
 - ⚡ **Fast Processing**: Async architecture with concurrent request handling
 - 📊 **Rich Metadata**: Extracts video title, duration, uploader, view count, and more
@@ -29,7 +29,7 @@ bot.py (main entry point)
 - **Python 3.12** with asyncio for concurrent processing
 - **python-telegram-bot v20.7** for Telegram Bot API integration
 - **yt-dlp 2024.12.13** for robust YouTube subtitle extraction
-- **google-generativeai 0.8.3** official SDK for Gemini 2.0 Flash Experimental
+- **google-generativeai 0.8.3** official SDK for Gemma 3 27B
 - **In-memory LRU caching** with TTL for video context storage
 - **Prometheus metrics** for monitoring and observability
 - **Docker** deployment with health checks and resource limits
@@ -181,7 +181,7 @@ The bot handles various error scenarios gracefully:
 2. **Video Info Extraction** (1-3 seconds) - Uses yt-dlp for metadata
 3. **Transcript Fetch** (2-5 seconds) - Subtitle extraction with timing
 4. **Text Cleaning** (< 100ms)
-5. **AI Summarization** (5-15 seconds) - Gemini 2.0 Flash Experimental
+5. **AI Summarization** (5-15 seconds) - Gemma 3 27B
 6. **Video Context Caching** (< 10ms) - Comprehensive metadata storage
 
 ### Optimization Features
@@ -216,7 +216,7 @@ youtube-content-summarizer/
 
 - **VideoContext Storage**: Comprehensive video metadata with transcript data
 - **yt-dlp Integration**: Robust YouTube data extraction bypassing restrictions
-- **Gemini 2.0 Flash Experimental**: Latest model with improved performance
+- **Gemma 3 27B**: Latest model with improved performance
 - **Multi-level Caching**: Per-chat LRU caches with global chat management
 - **Context-aware Q&A**: Uses video metadata for better question answering
 - **Production Monitoring**: Health checks, metrics, and structured logging

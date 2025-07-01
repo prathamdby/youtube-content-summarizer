@@ -6,7 +6,7 @@
 - **python-telegram-bot v20+** (Bot API 9.0)
 - **youtube_transcript_api** (free captions, no API key required)
 - **google-generativeai** (official Google GenAI package)
-- **Gemini 2.5 Flash** (2 M-token window)
+- **Gemma 3 27B** (2 M-token window)
 - **asyncio** + **aiohttp** for async I/O; **tenacity** for retries
 - **In-memory** LRU caches (no external datastore)
 
@@ -17,7 +17,7 @@
 | 1    | `/summarize <YouTube URL>`      | validate URL → enqueue "job"                 |
 | 2    |                                 | send "Fetching transcript…" progress message |
 | 3    |                                 | fetch & clean transcript                     |
-| 4    |                                 | stream to Gemini 2.5 Flash → summary         |
+| 4    |                                 | stream to Gemma 3 27B → summary              |
 | 5    |                                 | edit progress message with summary + hint    |
 | 6    | user replies to summary message | retrieve transcript from cache → Gemini Q&A  |
 
@@ -113,7 +113,7 @@ Cache: Dict[int, LRUDict[int, Transcript]]
 
 ---
 
-**Deliverable**: single repo (\~600 LOC), zero external state, production-ready with Bot API 9.0 & Gemini 2.5 Flash via Google GenAI package.
+**Deliverable**: single repo (\~600 LOC), zero external state, production-ready with Bot API 9.0 & Gemma 3 27B via Google GenAI package.
 
 ## 11. Google GenAI Integration Details
 
@@ -124,7 +124,7 @@ import google.generativeai as genai
 
 # Configure the client
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-model = genai.GenerativeModel('gemini-2.5-flash')
+model = genai.GenerativeModel('gemma-3-27b-it')
 ```
 
 **Key Benefits**
@@ -142,7 +142,7 @@ async def generate_summary(transcript: str) -> str:
     response = await model.generate_content_async(
         f"Summarize this YouTube transcript:\n\n{transcript}",
         generation_config=genai.types.GenerationConfig(
-            temperature=0.3,
+            temperature=0.7,
             max_output_tokens=1000,
         )
     )

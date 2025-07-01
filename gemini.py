@@ -44,7 +44,7 @@ class GeminiClient:
     """Async wrapper for Google GenAI with retry logic and chunking support."""
 
     def __init__(
-        self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash-exp"
+        self, api_key: Optional[str] = None, model_name: str = "gemma-3-27b-it"
     ):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model_name = model_name
@@ -75,7 +75,7 @@ class GeminiClient:
             try:
                 with Timer("gemini_generation"):
                     generation_config = genai.types.GenerationConfig(
-                        temperature=0.3,
+                        temperature=0.7,
                         max_output_tokens=kwargs.get("max_output_tokens", 1000),
                         top_p=0.8,
                         top_k=40,
@@ -206,7 +206,7 @@ class GeminiClient:
 
         Args:
             transcript: Full transcript text
-            max_tokens: Maximum tokens for single request (default 120k for Gemini 2.5 Flash)
+            max_tokens: Maximum tokens for single request (default 120k for Gemma 3 27B)
 
         Returns:
             Generated summary
