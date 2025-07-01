@@ -276,15 +276,25 @@ async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 else "Unknown"
             )
 
-            final_message = f"""✅ **YouTube Video Summary**
+            # Create header with metadata in MarkdownV2 format
+            header_message = f"""✅ **YouTube Video Summary**
 
 🎥 **{video_title}**
 📺 **Channel:** {escape_markdown_v2(video_channel)}
 ⏱️ **Duration:** {duration_str}
 
-{escape_markdown_v2(summary)}
+"""
+
+            # Create footer with tip in MarkdownV2 format
+            footer_message = """
 
 💡 **Tip:** Reply to this message to ask questions about the video content\\!"""
+
+            # Escape the AI-generated summary for MarkdownV2 compatibility
+            escaped_summary = escape_markdown_v2(summary)
+
+            # Combine header + escaped summary + footer
+            final_message = header_message + escaped_summary + footer_message
 
             final_msg = await processing_message.edit_text(
                 final_message, parse_mode=ParseMode.MARKDOWN_V2
@@ -401,12 +411,20 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             # Fallback to transcript-only for backward compatibility
             answer = await gemini_client.answer_question(transcript_text, user_question)
 
-        # Format and send response
-        response_message = f"""💬 **Answer about {escape_markdown_v2(video_title)}:**
+            # Format and send response with header/footer in MarkdownV2 and answer in plain text
+        header_message = f"""💬 **Answer about {escape_markdown_v2(video_title)}:**
 
-{escape_markdown_v2(answer)}
+"""
+
+        footer_message = f"""
 
 ❓ **Your question:** {sanitize_text(user_question)}"""
+
+        # Escape the AI-generated answer for MarkdownV2 compatibility
+        escaped_answer = escape_markdown_v2(answer)
+
+        # Combine header + escaped answer + footer
+        response_message = header_message + escaped_answer + footer_message
 
         await thinking_message.edit_text(
             response_message, parse_mode=ParseMode.MARKDOWN_V2

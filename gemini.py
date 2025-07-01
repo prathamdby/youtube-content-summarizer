@@ -269,25 +269,27 @@ class GeminiClient:
            - Focus on substance over superficial details
 
         **ALWAYS ignore technical elements** like timestamps, speaker labels, or audio cues (e.g., "[Music]", "[Applause]") - focus exclusively on substantive content.
+
+        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
         </instructions>
 
         <output_format>
-        **CRITICAL:** Structure your summary using this EXACT format:
+        **CRITICAL:** Structure your summary using this EXACT format with PLAIN TEXT only:
 
-        **🎯 Main Topic**
+        🎯 Main Topic
         [One clear sentence describing what this video is fundamentally about]
 
-        **🔑 Key Points**
+        🔑 Key Points
         • [First major point or insight - be specific and actionable]
         • [Second major point or insight - include relevant details]
         • [Third major point or insight - focus on value for viewers]
         • [Fourth point if applicable - maintain focus on most important content]
         • [Fifth point if applicable - ensure each point adds distinct value]
 
-        **💡 Key Takeaways**
+        💡 Key Takeaways
         [2-3 sentences summarizing what viewers should remember and potentially act upon after watching this video]
 
-        **📌 Context & Background**
+        📌 Context & Background
         [Relevant background information, references, or context that enhances understanding of the content]
         </output_format>
 
@@ -295,7 +297,7 @@ class GeminiClient:
         {transcript}
         </transcript>
 
-        **Your analysis and summary:**
+        **Your analysis and summary (PLAIN TEXT WITH EMOJIS ONLY):**
         """
         ).strip()
 
@@ -358,13 +360,15 @@ class GeminiClient:
         4. **Be comprehensive** - Don't miss important information that might be critical for the overall summary
 
         **ALWAYS prioritize:** Important facts, expert insights, actionable information, key arguments, and significant details that contribute to the video's overall value.
+
+        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
         </instructions>
 
         <transcript_segment>
         {chunk}
         </transcript_segment>
 
-        **Provide a focused summary of the key information in this segment:**
+        **Provide a focused summary of the key information in this segment (PLAIN TEXT WITH EMOJIS ONLY):**
         """
         ).strip()
 
@@ -406,23 +410,27 @@ class GeminiClient:
            - Make each section substantive and actionable
 
         **ALWAYS ensure** your final summary captures the complete video's value and could stand alone as a comprehensive overview.
+
+        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
         </instructions>
 
         <output_format>
-        **🎯 Main Topic**
+        **CRITICAL:** Structure your summary using this EXACT format with PLAIN TEXT only:
+
+        🎯 Main Topic
         [Clear, comprehensive description of what this entire video covers]
 
-        **🔑 Key Points**
+        🔑 Key Points
         • [Most important insight or information from the complete video]
         • [Second key point that adds distinct value]
         • [Third key point covering different aspect]
         • [Fourth point if needed - ensure comprehensive coverage]
         • [Fifth point if needed - maintain focus on highest-value content]
 
-        **💡 Key Takeaways**
+        💡 Key Takeaways
         [2-3 sentences capturing what viewers should remember and potentially implement from the entire video]
 
-        **📌 Context & Background**
+        📌 Context & Background
         [Relevant context, background information, or broader implications discussed in the video]
         </output_format>
 
@@ -430,7 +438,7 @@ class GeminiClient:
         {combined_summaries}
         </segment_summaries>
 
-        **Your comprehensive synthesis:**
+        **Your comprehensive synthesis (PLAIN TEXT WITH EMOJIS ONLY):**
         """
         ).strip()
 
@@ -509,6 +517,8 @@ class GeminiClient:
 
         **ALWAYS base your response** exclusively on the video content. **NEVER add** external information not present in the transcript.
 
+        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
+
         <if_information_available>
         If the transcript contains clear information to answer the question:
         - Provide a comprehensive, detailed answer
@@ -539,7 +549,7 @@ class GeminiClient:
         {question}
         </user_question>
 
-        **Your precise, helpful answer based on the video content:**
+        **Your precise, helpful answer based on the video content (PLAIN TEXT WITH EMOJIS ONLY):**
         """
         ).strip()
 
@@ -574,6 +584,8 @@ class GeminiClient:
 
         **CRITICAL:** Base your answer exclusively on the provided summary. 
 
+        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
+
         <if_summary_contains_answer>
         When the summary clearly addresses the question:
         - Provide a comprehensive answer based on the summary
@@ -604,7 +616,7 @@ class GeminiClient:
         {question}
         </user_question>
 
-        **Your answer based on the video summary:**
+        **Your answer based on the video summary (PLAIN TEXT WITH EMOJIS ONLY):**
         """
         ).strip()
 
@@ -769,6 +781,8 @@ Upload Date: {upload_date}"""
 
         **ALWAYS use ALL available information** to provide the most complete answer possible.
 
+        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
+
         <metadata_questions>
         For questions about basic video information (title, creator, duration, etc.):
         - Use the metadata as the primary source
@@ -824,7 +838,7 @@ Upload Date: {upload_date}"""
         {question}
         </user_question>
 
-        **Your comprehensive answer using all available information:**
+        **Your comprehensive answer using all available information (PLAIN TEXT WITH EMOJIS ONLY):**
         """
         ).strip()
 
