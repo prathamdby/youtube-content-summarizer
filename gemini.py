@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import List, Optional, Dict, Any
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -57,16 +57,8 @@ class GeminiClient:
         # Configure the client
         genai.configure(api_key=self.api_key)
 
-        # Initialize model with safety settings
-        self.model = genai.GenerativeModel(
-            model_name=self.model_name,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            },
-        )
+        # Initialize model
+        self.model = genai.GenerativeModel(model_name=self.model_name)
 
         logger.info(f"Initialized Gemini client with model: {self.model_name}")
 
