@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   youtube-summarizer-bot:
     build: .
