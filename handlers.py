@@ -534,9 +534,20 @@ async def auto_summary_handler(
 
         REQUEST_COUNT.labels(command="autosummary", status="success").inc()
 
+    except (VideoTooLongError, TranscriptUnavailableError) as e:
+        # These are expected failures, log as info and don't notify the user to avoid spam
+        logger.info(f"Auto summary not applicable for video {video_id}: {e}")
+        REQUEST_COUNT.labels(command="autosummary", status="not_eligible").inc()
+    except TranscriptError as e:
+        # Other transcript errors might be more severe
+        logger.warning(f"Auto summary transcript error for video {video_id}: {e}")
+        REQUEST_COUNT.labels(command="autosummary", status="transcript_error").inc()
+    except GeminiError as e:
+        logger.error(f"Auto summary failed due to Gemini error: {e}")
+        REQUEST_COUNT.labels(command="autosummary", status="ai_error").inc()
     except Exception as e:
-        logger.error(f"Auto summary failed: {e}")
-        REQUEST_COUNT.labels(command="autosummary", status="error").inc()
+        logger.error(f"Unexpected error in auto summary for video {video_id}: {e}")
+        REQUEST_COUNT.labels(command="autosummary", status="unexpected_error").inc()
 
 
 async def handle_unknown_command(
