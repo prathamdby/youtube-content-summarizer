@@ -8,8 +8,10 @@ import tempfile
 import json
 import re
 import time
+import os
 from typing import Optional, List, Dict, Any
 import yt_dlp
+from proxy_list import ProxyList
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -43,9 +45,34 @@ class TranscriptUnavailableError(TranscriptError):
     pass
 
 
+def get_rotating_proxy() -> Optional[str]:
+    """
+    Get a random rotating proxy.
+
+    Returns:
+        Proxy URL string or None if fetching fails.
+    """
+    try:
+        proxy_list = ProxyList()
+        proxy_dict = proxy_list.get_random_proxy()
+        # The response is in format {'https': 'ip:port'}
+        if proxy_dict and "https" in proxy_dict:
+            return f"http://{proxy_dict['https']}"
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get rotating proxy: {e}")
+        return None
+
+
 def get_yt_dlp_options():
     """Get yt-dlp options optimized for transcript extraction."""
-    return {
+    # Get rotating proxy
+    proxy = get_rotating_proxy()
+    if not proxy:
+        # Fallback to environment variable if rotating proxy fails
+        proxy = os.environ.get("PROXY_URL")
+
+    ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": False,
@@ -74,6 +101,10 @@ def get_yt_dlp_options():
         "fragment_retries": 3,
         "extractor_retries": 3,
     }
+    if proxy:
+        ydl_opts["proxy"] = proxy
+
+    return ydl_opts
 
 
 @retry(
@@ -100,6 +131,12 @@ async def fetch_video_info_with_retry(video_id: str) -> Dict[str, Any]:
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
+        # Get rotating proxy
+        proxy = get_rotating_proxy()
+        if not proxy:
+            # Fallback to environment variable if rotating proxy fails
+            proxy = os.environ.get("PROXY_URL")
+
         # Configure yt-dlp options without format selection
         ydl_opts = {
             "quiet": True,
@@ -120,6 +157,8 @@ async def fetch_video_info_with_retry(video_id: str) -> Dict[str, Any]:
             "fragment_retries": 2,
             "extractor_retries": 2,
         }
+        if proxy:
+            ydl_opts["proxy"] = proxy
 
         # Run yt-dlp in thread pool since it's synchronous
         def extract_info():
@@ -166,6 +205,12 @@ async def extract_subtitles_with_ytdlp(video_id: str) -> List[Dict[str, Any]]:
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
+        # Get rotating proxy
+        proxy = get_rotating_proxy()
+        if not proxy:
+            # Fallback to environment variable if rotating proxy fails
+            proxy = os.environ.get("PROXY_URL")
+
         # Configure yt-dlp for subtitle extraction only - no format selection
         ydl_opts = {
             "quiet": True,
@@ -186,6 +231,8 @@ async def extract_subtitles_with_ytdlp(video_id: str) -> List[Dict[str, Any]]:
             "fragment_retries": 2,
             "extractor_retries": 2,
         }
+        if proxy:
+            ydl_opts["proxy"] = proxy
 
         subtitle_data = []
 
