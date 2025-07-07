@@ -8,7 +8,7 @@ import re
 from typing import Optional
 from telegram import Update, Message
 from telegram.ext import ContextTypes
-from telegram.constants import ParseMode, ChatAction, ChatType
+from telegram.constants import ParseMode, ChatAction, ChatType, MessageEntityType
 
 from utils import (
     extract_video_id,
@@ -479,10 +479,21 @@ async def auto_summary_handler(
     if update.effective_chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
         return
 
-    message_text = update.message.text or ""
+    message = update.effective_message
+    message_text = message.text or ""
 
-    # Find potential URLs in the message
     urls = re.findall(r"https://\S+", message_text)
+
+    # Include explicit URL entities and text links
+    if message.entities:
+        for entity, value in message.parse_entities(
+            types=[MessageEntityType.URL, MessageEntityType.TEXT_LINK]
+        ).items():
+            if entity.type == MessageEntityType.URL:
+                urls.append(value)
+            elif entity.type == MessageEntityType.TEXT_LINK and entity.url:
+                urls.append(entity.url)
+
     video_id: Optional[str] = None
     for url in urls:
         cleaned = url.rstrip(".,")
