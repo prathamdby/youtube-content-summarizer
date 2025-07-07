@@ -4,7 +4,7 @@
 
 - **Python 3.12**
 - **python-telegram-bot v20+** (Bot API 9.0)
-- **youtube_transcript_api** (free captions, no API key required)
+- **yt-dlp** for transcript extraction
 - **google-generativeai** (official Google GenAI package)
 - **Gemma 3 27B** (2 M-token window)
 - **asyncio** + **aiohttp** for async I/O; **tenacity** for retries
@@ -51,7 +51,7 @@ Cache: Dict[int, LRUDict[int, Transcript]]
 
 1. **URL validation** → extract `video_id`.
 2. **Transcript retrieval**
-   - `youtube_transcript_api.YouTubeTranscriptApi.get_transcript(video_id)`
+   - extract subtitles using `yt-dlp`
    - abort with "Transcript unavailable" if no captions exist
 3. **Cleaning**
    - strip markers (`[Music]`, `[Applause]`), merge short lines
