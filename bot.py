@@ -21,6 +21,7 @@ from handlers import (
     stats_command,
     summarize_command,
     handle_reply,
+    auto_summary_handler,
     handle_unknown_command,
     error_handler,
 )
@@ -57,6 +58,11 @@ class YouTubeSummarizerBot:
             MessageHandler(
                 filters.TEXT & filters.REPLY & ~filters.COMMAND, handle_reply
             )
+        )
+
+        # Auto-summarize YouTube links posted in group chats
+        self.application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, auto_summary_handler)
         )
 
         # Handle unknown commands
