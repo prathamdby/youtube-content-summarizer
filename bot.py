@@ -11,6 +11,9 @@ from typing import Optional
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+# Load environment variables before importing modules that rely on them
+load_dotenv()
+
 from utils import setup_logging, start_metrics_server
 from handlers import (
     start_command,
@@ -23,10 +26,6 @@ from handlers import (
 )
 from cache import transcript_cache
 from gemini import gemini_client
-
-
-# Load environment variables
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
