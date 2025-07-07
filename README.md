@@ -59,7 +59,7 @@ bot.py (main entry point)
 3. **Set environment variables**:
 
    ```bash
-   cp env.example .env
+   cp .env.example .env
    # Edit .env with your API keys
    ```
 
@@ -75,7 +75,7 @@ bot.py (main entry point)
    ```bash
    git clone <repository-url>
    cd youtube-content-summarizer
-   cp env.example .env
+   cp .env.example .env
    # Edit .env with your API keys
    ```
 
