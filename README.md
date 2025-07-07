@@ -7,6 +7,7 @@ A fast, efficient Telegram bot that provides AI-powered summaries of YouTube vid
 - 🎥 **Video Summarization**: Get comprehensive summaries of YouTube videos with metadata
 - 🤖 **AI-Powered**: Uses Google Gemma 3 27B for high-quality summaries
 - 💬 **Interactive Q&A**: Ask follow-up questions about video content with context awareness
+- 🔗 **Auto Link Summaries**: Automatically summarizes YouTube links in group chats
 - ⚡ **Fast Processing**: Async architecture with concurrent request handling
 - 📊 **Rich Metadata**: Extracts video title, duration, uploader, view count, and more
 - 📈 **Smart Caching**: Video context caching with comprehensive metadata storage

@@ -444,6 +444,62 @@ class GeminiClient:
 
         return await self._generate_content_with_retry(prompt, max_output_tokens=1000)
 
+    async def generate_brief_summary(self, transcript: str, max_tokens: int = 120000) -> str:
+        """Generate a concise 2-3 sentence summary of a transcript."""
+        try:
+            estimated_tokens = estimate_tokens(transcript)
+
+            if estimated_tokens <= max_tokens:
+                prompt = self._build_brief_summary_prompt(transcript)
+                return await self._generate_content_with_retry(prompt, max_output_tokens=300)
+
+            # For large transcripts, summarize in chunks then synthesize
+            chunks = self._chunk_text(transcript, max_tokens=25000)
+            chunk_summaries = []
+            for chunk in chunks:
+                p = self._build_brief_summary_prompt(chunk)
+                chunk_summaries.append(
+                    await self._generate_content_with_retry(p, max_output_tokens=150)
+                )
+
+            synthesis_prompt = self._build_brief_synthesis_prompt("\n\n".join(chunk_summaries))
+            return await self._generate_content_with_retry(synthesis_prompt, max_output_tokens=300)
+
+        except (GeminiSafetyError, GeminiRateLimitError):
+            raise
+        except Exception as e:
+            logger.error(f"Brief summary generation failed: {e}")
+            raise GeminiError(f"Failed to generate brief summary: {str(e)}")
+
+    def _build_brief_summary_prompt(self, transcript: str) -> str:
+        """Prompt for concise summary of a transcript."""
+        return dedent(
+            f"""
+        Summarize the following YouTube transcript in no more than three sentences.
+        Use PLAIN TEXT with emojis and no markdown formatting.
+
+        <transcript>
+        {transcript}
+        </transcript>
+
+        **Concise summary (PLAIN TEXT WITH EMOJIS ONLY):**
+        """
+        ).strip()
+
+    def _build_brief_synthesis_prompt(self, summaries: str) -> str:
+        """Prompt to combine chunk summaries into a concise overview."""
+        return dedent(
+            f"""
+        Combine these short summaries into one concise overview (max three sentences).
+
+        <summaries>
+        {summaries}
+        </summaries>
+
+        **Final concise summary (PLAIN TEXT WITH EMOJIS ONLY):**
+        """
+        ).strip()
+
     async def answer_question(self, transcript: str, question: str) -> str:
         """
         Answer a question about the transcript content.

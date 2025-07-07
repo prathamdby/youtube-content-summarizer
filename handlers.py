@@ -4,10 +4,11 @@ Telegram bot command and message handlers.
 
 import asyncio
 import logging
+import re
 from typing import Optional
 from telegram import Update, Message
 from telegram.ext import ContextTypes
-from telegram.constants import ParseMode, ChatAction
+from telegram.constants import ParseMode, ChatAction, ChatType
 
 from utils import (
     extract_video_id,
@@ -469,6 +470,62 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         REQUEST_COUNT.labels(command="reply", status="unexpected_error").inc()
+
+
+async def auto_summary_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Automatically summarize YouTube links posted in group chats."""
+    if update.effective_chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        return
+
+    message_text = update.message.text or ""
+
+    # Find potential URLs in the message
+    urls = re.findall(r"https://\S+", message_text)
+    video_id: Optional[str] = None
+    for url in urls:
+        cleaned = url.rstrip(".,")
+        vid = extract_video_id(cleaned)
+        if vid:
+            video_id = vid
+            break
+
+    if not video_id:
+        return
+
+    REQUEST_COUNT.labels(command="autosummary", status="received").inc()
+
+    try:
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action=ChatAction.TYPING
+        )
+
+        video_context = await get_video_context(video_id)
+        summary = await gemini_client.generate_brief_summary(
+            video_context["transcript"]["text"]
+        )
+
+        escaped_summary = escape_markdown_v2(summary)
+        reply_msg = await update.message.reply_text(
+            f"🎬 **Quick Summary:**\n\n{escaped_summary}",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+
+        # Store context for follow-up questions
+        video_context["summary"] = summary
+        video_context["summary_timestamp"] = asyncio.get_event_loop().time()
+        transcript_cache.put_video_context(
+            chat_id=update.effective_chat.id,
+            message_id=reply_msg.message_id,
+            video_context=video_context,
+        )
+
+        REQUEST_COUNT.labels(command="autosummary", status="success").inc()
+
+    except Exception as e:
+        logger.error(f"Auto summary failed: {e}")
+        REQUEST_COUNT.labels(command="autosummary", status="error").inc()
 
 
 async def handle_unknown_command(
