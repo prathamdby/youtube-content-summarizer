@@ -19,6 +19,7 @@ from handlers import (
     start_command,
     help_command,
     stats_command,
+    debug_command,
     summarize_command,
     handle_reply,
     auto_summary_handler,
@@ -50,6 +51,7 @@ class YouTubeSummarizerBot:
         self.application.add_handler(CommandHandler("start", start_command))
         self.application.add_handler(CommandHandler("help", help_command))
         self.application.add_handler(CommandHandler("stats", stats_command))
+        self.application.add_handler(CommandHandler("debug", debug_command))
         self.application.add_handler(CommandHandler("summarize", summarize_command))
 
         # Add message handlers

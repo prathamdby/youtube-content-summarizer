@@ -20,6 +20,9 @@ from utils import (
 from youtube import (
     get_video_transcript,
     get_video_context,
+    validate_video_accessibility,
+    test_proxy_connectivity,
+    test_youtube_access,
     TranscriptError,
     TranscriptUnavailableError,
     VideoTooLongError,
@@ -137,6 +140,87 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logger.error(f"Error sending stats message: {e}")
         REQUEST_COUNT.labels(command="stats", status="error").inc()
+
+
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /debug command - test proxy and YouTube connectivity."""
+    REQUEST_COUNT.labels(command="debug", status="received").inc()
+
+    # Send initial message
+    debug_message = await update.message.reply_text(
+        "🔧 **Running Diagnostics\\.\\.\\.**\n\n"
+        "Testing proxy connectivity and YouTube access\\.\\.\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    try:
+        # Test proxy connectivity
+        proxy_result = await test_proxy_connectivity()
+
+        # Test YouTube access
+        youtube_result = await test_youtube_access()
+
+        # Format results
+        proxy_status = (
+            "✅ Working" if proxy_result.get("proxy_working") else "❌ Failed"
+        )
+        youtube_status = (
+            "✅ Working" if youtube_result.get("youtube_accessible") else "❌ Failed"
+        )
+
+        # Build diagnostic message
+        diagnostic_text = f"""🔧 **System Diagnostics**
+
+**Proxy Status:** {proxy_status}
+• Configured: {"✅ Yes" if proxy_result.get("proxy_configured") else "❌ No"}
+• URL: `{proxy_result.get("proxy_url", "Not configured")}`
+
+**YouTube Access:** {youtube_status}"""
+
+        if proxy_result.get("proxy_working"):
+            diagnostic_text += f"""
+• IP Address: `{proxy_result.get("ip_address", "Unknown")}`
+• Country: `{proxy_result.get("country", "Unknown")}`
+• WARP Status: `{proxy_result.get("warp_status", "Unknown")}`"""
+
+        if youtube_result.get("youtube_accessible"):
+            diagnostic_text += f"""
+• Test Video: "{youtube_result.get("video_title", "Unknown")}"
+• Duration: {youtube_result.get("video_duration", 0)} seconds
+• Subtitles: {"✅ Available" if youtube_result.get("subtitles_available") else "❌ Not available"}"""
+
+        # Add error information if there are issues
+        if not proxy_result.get("proxy_working") and proxy_result.get("error"):
+            diagnostic_text += f"""
+
+**Proxy Error:**
+`{escape_markdown_v2(proxy_result["error"])}`"""
+
+        if not youtube_result.get("youtube_accessible") and youtube_result.get("error"):
+            diagnostic_text += f"""
+
+**YouTube Error:**
+`{escape_markdown_v2(youtube_result["error"])}`"""
+
+        diagnostic_text += """
+
+**Troubleshooting Tips:**
+• Check WARP container status: `docker-compose logs warp`
+• Restart WARP: `docker-compose restart warp`
+• Test manually: `curl --socks5-hostname warp:1080 https://youtube.com`"""
+
+        await debug_message.edit_text(diagnostic_text, parse_mode=ParseMode.MARKDOWN_V2)
+        REQUEST_COUNT.labels(command="debug", status="success").inc()
+
+    except Exception as e:
+        logger.error(f"Error running diagnostics: {e}")
+        await debug_message.edit_text(
+            f"❌ **Diagnostic Error**\n\n"
+            f"Failed to run diagnostics\\.\n\n"
+            f"Error: `{escape_markdown_v2(str(e))}`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        REQUEST_COUNT.labels(command="debug", status="error").inc()
 
 
 async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

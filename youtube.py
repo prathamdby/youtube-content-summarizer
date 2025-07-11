@@ -26,6 +26,123 @@ from cache import Transcript
 logger = logging.getLogger(__name__)
 
 
+async def test_proxy_connectivity() -> Dict[str, Any]:
+    """
+    Test WARP proxy connectivity and return diagnostic information.
+
+    Returns:
+        Dictionary with connectivity test results
+    """
+    proxy = os.environ.get("PROXY_URL")
+
+    if not proxy:
+        return {
+            "proxy_configured": False,
+            "error": "No PROXY_URL environment variable set",
+        }
+
+    try:
+        import urllib.request
+        import urllib.error
+        import socket
+
+        # Test basic proxy connectivity
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler)
+
+        # Test Cloudflare trace endpoint
+        req = urllib.request.Request(
+            "https://cloudflare.com/cdn-cgi/trace",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
+
+        try:
+            with opener.open(req, timeout=10) as response:
+                trace_data = response.read().decode("utf-8")
+
+                # Parse trace data
+                trace_info = {}
+                for line in trace_data.strip().split("\n"):
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        trace_info[key] = value
+
+                return {
+                    "proxy_configured": True,
+                    "proxy_url": proxy,
+                    "proxy_working": True,
+                    "cloudflare_trace": trace_info,
+                    "ip_address": trace_info.get("ip", "Unknown"),
+                    "country": trace_info.get("loc", "Unknown"),
+                    "warp_status": trace_info.get("warp", "Unknown"),
+                }
+
+        except urllib.error.URLError as e:
+            return {
+                "proxy_configured": True,
+                "proxy_url": proxy,
+                "proxy_working": False,
+                "error": f"Proxy connection failed: {str(e)}",
+            }
+
+    except Exception as e:
+        return {
+            "proxy_configured": True,
+            "proxy_url": proxy,
+            "proxy_working": False,
+            "error": f"Proxy test failed: {str(e)}",
+        }
+
+
+async def test_youtube_access(video_id: str = "dQw4w9WgXcQ") -> Dict[str, Any]:
+    """
+    Test YouTube access with current configuration.
+
+    Args:
+        video_id: Test video ID (default: Rick Roll - always available)
+
+    Returns:
+        Dictionary with YouTube access test results
+    """
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        ydl_opts = get_yt_dlp_options()
+
+        def test_access():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    return {
+                        "youtube_accessible": True,
+                        "video_title": info.get("title", "Unknown"),
+                        "video_duration": info.get("duration", 0),
+                        "subtitles_available": bool(
+                            info.get("subtitles") or info.get("automatic_captions")
+                        ),
+                        "uploader": info.get("uploader", "Unknown"),
+                    }
+                except yt_dlp.DownloadError as e:
+                    return {
+                        "youtube_accessible": False,
+                        "error": str(e),
+                        "error_type": "DownloadError",
+                    }
+                except Exception as e:
+                    return {
+                        "youtube_accessible": False,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    }
+
+        result = await asyncio.get_event_loop().run_in_executor(None, test_access)
+        return result
+
+    except Exception as e:
+        return {"youtube_accessible": False, "error": str(e), "error_type": "TestError"}
+
+
 class TranscriptError(Exception):
     """Custom exception for transcript-related errors."""
 
@@ -60,27 +177,53 @@ def get_yt_dlp_options():
         # Don't select any format since we're not downloading
         "format": "best[height<=144]/worst",  # Fallback to lowest quality if needed
         "ignore_errors": False,
-        # User agent to avoid blocks
+        # Enhanced user agent and headers to avoid detection
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-us,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
             "DNT": "1",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
         },
         # Add some delay to avoid rate limiting
-        "sleep_interval": 1,
-        "max_sleep_interval": 5,
-        # Retry configuration
-        "retries": 3,
-        "fragment_retries": 3,
-        "extractor_retries": 3,
+        "sleep_interval": 2,
+        "max_sleep_interval": 10,
+        # Enhanced retry configuration
+        "retries": 5,
+        "fragment_retries": 5,
+        "extractor_retries": 5,
+        # Additional options to bypass restrictions
+        "geo_bypass": True,
+        "geo_bypass_country": "US",
+        # Enable verbose logging for debugging
+        "verbose": False,
+        # Force IPv4 to avoid IPv6 issues
+        "force_ipv4": True,
+        # Additional cookies and session handling
+        "cookiefile": None,
+        "cookiesfrombrowser": None,
     }
+
     if proxy:
         ydl_opts["proxy"] = proxy
         logger.info(f"Using proxy: {proxy}")
+
+        # Add proxy-specific configurations
+        ydl_opts.update(
+            {
+                "socket_timeout": 30,
+                "source_address": None,  # Let proxy handle the source
+            }
+        )
+    else:
+        logger.warning("No proxy configured - YouTube access may be blocked")
 
     return ydl_opts
 
@@ -109,31 +252,16 @@ async def fetch_video_info_with_retry(video_id: str) -> Dict[str, Any]:
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # Use static proxy from environment variable (WARP proxy)
-        proxy = os.environ.get("PROXY_URL")
-
-        # Configure yt-dlp options without format selection
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": False,
-            "writesubtitles": False,
-            "writeautomaticsub": False,
-            "skip_download": True,
-            "no_check_certificates": True,
-            # User agent to avoid blocks
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-us,en;q=0.5",
-            },
-            # Retry configuration
-            "retries": 2,
-            "fragment_retries": 2,
-            "extractor_retries": 2,
-        }
-        if proxy:
-            ydl_opts["proxy"] = proxy
+        # Use the existing helper function instead of duplicating proxy setup
+        ydl_opts = get_yt_dlp_options()
+        # Override some options for info extraction
+        ydl_opts.update(
+            {
+                "retries": 2,
+                "fragment_retries": 2,
+                "extractor_retries": 2,
+            }
+        )
 
         # Run yt-dlp in thread pool since it's synchronous
         def extract_info():
@@ -180,31 +308,16 @@ async def extract_subtitles_with_ytdlp(video_id: str) -> List[Dict[str, Any]]:
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # Use static proxy from environment variable (WARP proxy)
-        proxy = os.environ.get("PROXY_URL")
-
-        # Configure yt-dlp for subtitle extraction only - no format selection
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "writesubtitles": False,
-            "writeautomaticsub": False,
-            "skip_download": True,
-            "no_check_certificates": True,
-            "extract_flat": False,
-            # User agent to avoid blocks
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-us,en;q=0.5",
-            },
-            # Retry configuration
-            "retries": 2,
-            "fragment_retries": 2,
-            "extractor_retries": 2,
-        }
-        if proxy:
-            ydl_opts["proxy"] = proxy
+        # Use the existing helper function instead of duplicating proxy setup
+        ydl_opts = get_yt_dlp_options()
+        # Override some options for subtitle extraction
+        ydl_opts.update(
+            {
+                "retries": 2,
+                "fragment_retries": 2,
+                "extractor_retries": 2,
+            }
+        )
 
         subtitle_data = []
 
@@ -462,25 +575,17 @@ async def validate_video_accessibility(video_id: str) -> bool:
     try:
         # Quick check using yt-dlp
         url = f"https://www.youtube.com/watch?v={video_id}"
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": False,
-            "writesubtitles": False,
-            "writeautomaticsub": False,
-            "skip_download": True,
-            "no_check_certificates": True,
-            # User agent to avoid blocks
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-us,en;q=0.5",
-            },
-            # Retry configuration
-            "retries": 1,
-            "fragment_retries": 1,
-            "extractor_retries": 1,
-        }
+
+        # Use the existing helper function instead of duplicating options setup
+        ydl_opts = get_yt_dlp_options()
+        # Override some options for quick accessibility check
+        ydl_opts.update(
+            {
+                "retries": 1,
+                "fragment_retries": 1,
+                "extractor_retries": 1,
+            }
+        )
 
         def check_video():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

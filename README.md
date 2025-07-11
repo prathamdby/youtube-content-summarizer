@@ -74,23 +74,6 @@ The bot uses [Cloudflare WARP](https://github.com/cmj2002/warp-docker) to bypass
 - **Reliable Access**: Uses Cloudflare's infrastructure for stable YouTube access
 - **No Manual Configuration**: Works out of the box with no additional setup needed
 
-### Optional: WARP+ Configuration
-
-For enhanced performance, you can use WARP+ (requires subscription):
-
-1. Get your WARP+ license key from the Cloudflare WARP mobile app
-2. Add it to your `.env` file:
-
-```env
-WARP_LICENSE_KEY=your_warp_plus_license_key_here
-```
-
-3. Restart the services:
-
-```bash
-docker-compose down && docker-compose up -d
-```
-
 ## Monitoring
 
 The bot includes built-in observability:
@@ -160,12 +143,11 @@ python -m black .
 
 ### Environment Variables
 
-| Variable           | Description                  | Required | Default         |
-| ------------------ | ---------------------------- | -------- | --------------- |
-| `BOT_TOKEN`        | Telegram bot token           | Yes      | -               |
-| `GEMINI_API_KEY`   | Google Gemini API key        | Yes      | -               |
-| `PROXY_URL`        | Proxy URL for YouTube access | No       | Auto-configured |
-| `WARP_LICENSE_KEY` | WARP+ license key            | No       | -               |
+| Variable         | Description                  | Required | Default         |
+| ---------------- | ---------------------------- | -------- | --------------- |
+| `BOT_TOKEN`      | Telegram bot token           | Yes      | -               |
+| `GEMINI_API_KEY` | Google Gemini API key        | Yes      | -               |
+| `PROXY_URL`      | Proxy URL for YouTube access | No       | Auto-configured |
 
 ### Docker Compose Configuration
 
@@ -199,7 +181,14 @@ docker-compose logs warp
 2. Test WARP connectivity:
 
 ```bash
-docker-compose exec warp curl --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace
+docker-compose exec warp python3 -c "
+import urllib.request
+proxy = urllib.request.ProxyHandler({'https': 'socks5://127.0.0.1:1080'})
+opener = urllib.request.build_opener(proxy)
+req = urllib.request.Request('https://cloudflare.com/cdn-cgi/trace')
+response = opener.open(req, timeout=10)
+print(response.read().decode('utf-8'))
+"
 ```
 
 3. Restart WARP service:

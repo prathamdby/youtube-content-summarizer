@@ -250,7 +250,7 @@ lightning_logs/
 .mlflow/
 
 # WARP proxy data
-warp_data/
+data/
 
 # Test files
 test_proxy.py

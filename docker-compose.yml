@@ -2,41 +2,64 @@ services:
   # Add WARP proxy service
   warp:
     image: caomingjun/warp
-    container_name: youtube-summarizer-warp
-    restart: unless-stopped
+    container_name: warp
+    restart: always
+    # add removed rule back (https://github.com/opencontainers/runc/pull/3468)
     device_cgroup_rules:
       - 'c 10:200 rwm'
     ports:
       - "1080:1080"
     environment:
       - WARP_SLEEP=2
-      # - WARP_LICENSE_KEY= # optional, set if you have WARP+
+      # - WARP_LICENSE_KEY= # optional
     cap_add:
+      # Docker already have them, these are for podman users
       - MKNOD
       - AUDIT_WRITE
+      # additional required cap for warp, both for podman and docker
       - NET_ADMIN
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
       - net.ipv4.conf.all.src_valid_mark=1
     volumes:
-      - ./warp_data:/var/lib/cloudflare-warp
+      - ./data:/var/lib/cloudflare-warp
     healthcheck:
-      test: [ "CMD", "curl", "--socks5-hostname", "127.0.0.1:1080", "https://cloudflare.com/cdn-cgi/trace" ]
+      test: |
+        python3 -c "
+        import socket, urllib.request, urllib.error
+        try:
+          # Test SOCKS5 proxy
+          proxy = urllib.request.ProxyHandler({'http': 'socks5://127.0.0.1:1080', 'https': 'socks5://127.0.0.1:1080'})
+          opener = urllib.request.build_opener(proxy)
+          req = urllib.request.Request('https://cloudflare.com/cdn-cgi/trace', headers={'User-Agent': 'Mozilla/5.0'})
+          response = opener.open(req, timeout=10)
+          content = response.read().decode('utf-8')
+          if 'warp=on' in content:
+            exit(0)
+          else:
+            exit(1)
+        except Exception as e:
+          exit(1)
+        "
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 3
-      start_period: 30s
+      start_period: 45s
 
   youtube-summarizer-bot:
     build: .
     container_name: youtube-summarizer-bot
     restart: unless-stopped
     depends_on:
-      - warp
+      warp:
+        condition: service_healthy
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - PROXY_URL=socks5://warp:1080 # Use WARP proxy
+      # Add debugging flags
+      - DEBUG_PROXY=${DEBUG_PROXY:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
       - "8000:8000" # Prometheus metrics
       - "8080:8080" # Health check
@@ -45,7 +68,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
