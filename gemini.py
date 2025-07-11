@@ -444,14 +444,18 @@ class GeminiClient:
 
         return await self._generate_content_with_retry(prompt, max_output_tokens=1000)
 
-    async def generate_brief_summary(self, transcript: str, max_tokens: int = 120000) -> str:
+    async def generate_brief_summary(
+        self, transcript: str, max_tokens: int = 120000
+    ) -> str:
         """Generate a concise 2-3 sentence summary of a transcript."""
         try:
             estimated_tokens = estimate_tokens(transcript)
 
             if estimated_tokens <= max_tokens:
                 prompt = self._build_brief_summary_prompt(transcript)
-                return await self._generate_content_with_retry(prompt, max_output_tokens=300)
+                return await self._generate_content_with_retry(
+                    prompt, max_output_tokens=300
+                )
 
             # For large transcripts, summarize in chunks then synthesize
             chunks = self._chunk_text(transcript, max_tokens=25000)
@@ -462,8 +466,12 @@ class GeminiClient:
                     await self._generate_content_with_retry(p, max_output_tokens=150)
                 )
 
-            synthesis_prompt = self._build_brief_synthesis_prompt("\n\n".join(chunk_summaries))
-            return await self._generate_content_with_retry(synthesis_prompt, max_output_tokens=300)
+            synthesis_prompt = self._build_brief_synthesis_prompt(
+                "\n\n".join(chunk_summaries)
+            )
+            return await self._generate_content_with_retry(
+                synthesis_prompt, max_output_tokens=300
+            )
 
         except (GeminiSafetyError, GeminiRateLimitError):
             raise

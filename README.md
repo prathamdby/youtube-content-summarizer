@@ -1,311 +1,228 @@
 # YouTube Content Summarizer Bot
 
-A fast, efficient Telegram bot that provides AI-powered summaries of YouTube videos using Google's Gemma 3 27B model. The bot fetches video transcripts and generates comprehensive summaries, with support for follow-up Q&A.
+A Telegram bot that summarizes YouTube videos using Google's Gemini AI, with follow-up Q&A capabilities.
 
 ## Features
 
-- 🎥 **Video Summarization**: Get comprehensive summaries of YouTube videos with metadata
-- 🤖 **AI-Powered**: Uses Google Gemma 3 27B for high-quality summaries
-- 💬 **Interactive Q&A**: Ask follow-up questions about video content with context awareness
-- 🔗 **Auto Link Summaries**: Automatically summarizes YouTube links in group chats
-- ⚡ **Fast Processing**: Async architecture with concurrent request handling
-- 📊 **Rich Metadata**: Extracts video title, duration, uploader, view count, and more
-- 📈 **Smart Caching**: Video context caching with comprehensive metadata storage
-- 🔒 **Security**: Input sanitization and content safety filters
-- 🚀 **Production Ready**: Docker deployment with health checks and resource management
-
-## Architecture
-
-```
-bot.py (main entry point)
-├── handlers.py      # Telegram command & message handlers
-├── youtube.py       # YouTube transcript fetching via yt-dlp
-├── gemini.py        # Google Gemini AI integration with chunking
-├── cache.py         # In-memory LRU cache with VideoContext storage
-└── utils.py         # Utilities for validation, logging, metrics
-```
-
-## Tech Stack
-
-- **Python 3.12** with asyncio for concurrent processing
-- **python-telegram-bot v20.7** for Telegram Bot API integration
-- **yt-dlp 2024.12.13** for robust YouTube subtitle extraction
-- **google-generativeai 0.8.3** official SDK for Gemma 3 27B
-- **In-memory LRU caching** with TTL for video context storage
-- **Prometheus metrics** for monitoring and observability
-- **Docker** deployment with health checks and resource limits
+- 🎥 **Video Summarization**: Get comprehensive summaries of YouTube videos
+- 🤖 **AI-Powered Q&A**: Ask follow-up questions about video content
+- 🔄 **Auto-Summarization**: Automatically summarizes YouTube links in group chats
+- 📊 **Rich Context**: Extracts video metadata, transcript, and generates intelligent summaries
+- 🛡️ **Bot Detection Bypass**: Uses Cloudflare WARP proxy for reliable YouTube access
+- 🐳 **Docker Ready**: Production-ready containerized deployment
 
 ## Quick Start
 
 ### Prerequisites
 
-1. **Telegram Bot Token**: Get from [@BotFather](https://t.me/botfather)
-2. **Google Gemini API Key**: Get from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- Docker and Docker Compose
+- Telegram Bot Token ([Get from BotFather](https://t.me/BotFather))
+- Google Gemini API Key ([Get from Google AI Studio](https://aistudio.google.com/app/apikey))
 
-### Local Development
+### Environment Setup
 
-1. **Clone the repository**:
+1. Clone the repository:
 
-   ```bash
-   git clone <repository-url>
-   cd youtube-content-summarizer
-   ```
+```bash
+git clone https://github.com/yourusername/youtube-content-summarizer.git
+cd youtube-content-summarizer
+```
 
-2. **Install dependencies**:
+2. Create a `.env` file:
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+```env
+BOT_TOKEN=your_telegram_bot_token_here
+GEMINI_API_KEY=your_gemini_api_key_here
+```
 
-3. **Set environment variables**:
+3. Start the services:
 
-   ```bash
-   cp .env.example .env
-   # Edit .env with your API keys
-   ```
+```bash
+docker-compose up -d
+```
 
-4. **Run the bot**:
-   ```bash
-   python bot.py
-   ```
+The bot will automatically set up a Cloudflare WARP proxy to bypass YouTube's bot detection.
 
-### Docker Deployment
+### Usage
 
-1. **Clone and configure**:
+1. **Start the bot**: Send `/start` to your bot
+2. **Summarize a video**: Send `/summarize https://www.youtube.com/watch?v=VIDEO_ID`
+3. **Ask questions**: Reply to any summary message with your question
+4. **Auto-summarization**: Just paste YouTube links in group chats (if enabled)
 
-   ```bash
-   git clone <repository-url>
-   cd youtube-content-summarizer
-   cp .env.example .env
-   # Edit .env with your API keys
-   ```
+## Architecture
 
-2. **Deploy with Docker Compose**:
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Telegram Bot  │ ── │  WARP Proxy     │ ── │   YouTube API   │
+│   (Port 8080)   │    │  (Port 1080)    │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                                              │
+         │                                              │
+         ▼                                              ▼
+┌─────────────────┐                          ┌─────────────────┐
+│   Gemini AI     │                          │   Transcript    │
+│   (Summarizer)  │                          │   Extraction    │
+└─────────────────┘                          └─────────────────┘
+```
 
-   ```bash
-   docker-compose up -d
-   ```
+## Proxy Configuration
 
-3. **Check status**:
-   ```bash
-   docker-compose ps
-   docker-compose logs -f
-   ```
+The bot uses [Cloudflare WARP](https://github.com/cmj2002/warp-docker) to bypass YouTube's bot detection:
 
-## Usage
+- **Automatic Setup**: WARP proxy starts automatically with Docker Compose
+- **Reliable Access**: Uses Cloudflare's infrastructure for stable YouTube access
+- **No Manual Configuration**: Works out of the box with no additional setup needed
 
-### Basic Commands
+### Optional: WARP+ Configuration
 
-- `/start` - Welcome message and introduction
-- `/help` - Detailed help and usage instructions
-- `/summarize <YouTube URL>` - Generate video summary
-- `/stats` - Show bot statistics and cache status
+For enhanced performance, you can use WARP+ (requires subscription):
 
-### Example Usage
+1. Get your WARP+ license key from the Cloudflare WARP mobile app
+2. Add it to your `.env` file:
 
-1. **Summarize a video**:
+```env
+WARP_LICENSE_KEY=your_warp_plus_license_key_here
+```
 
-   ```
-   /summarize https://www.youtube.com/watch?v=dQw4w9WgXcQ
-   ```
+3. Restart the services:
 
-2. **Ask follow-up questions**:
-   After receiving a summary, reply to the bot's message with your question:
-   ```
-   What are the main points discussed about machine learning?
-   ```
+```bash
+docker-compose down && docker-compose up -d
+```
 
-### Supported URL Formats
+## Monitoring
+
+The bot includes built-in observability:
+
+- **Health Checks**: Available at `http://localhost:8080/health`
+- **Metrics**: Prometheus metrics at `http://localhost:8000/metrics`
+- **Structured Logging**: JSON-formatted logs for easy parsing
+
+## Commands
+
+| Command            | Description                           |
+| ------------------ | ------------------------------------- |
+| `/start`           | Show welcome message and bot features |
+| `/help`            | Display detailed usage instructions   |
+| `/summarize <URL>` | Summarize a YouTube video             |
+| `/stats`           | Show bot statistics and cache info    |
+
+## Supported YouTube URLs
 
 - `https://www.youtube.com/watch?v=VIDEO_ID`
 - `https://youtu.be/VIDEO_ID`
 - `https://m.youtube.com/watch?v=VIDEO_ID`
 
-## Configuration
+## Limitations
 
-### Environment Variables
-
-| Variable         | Description                        | Required |
-| ---------------- | ---------------------------------- | -------- |
-| `BOT_TOKEN`      | Telegram bot token from @BotFather | Yes      |
-| `GEMINI_API_KEY` | Google Gemini API key              | Yes      |
-
-### Limits and Constraints
-
-- **Video Length**: Maximum 3 hours
-- **URL Security**: Only HTTPS YouTube URLs accepted
-- **Transcript Requirement**: Videos must have captions/subtitles
-- **Cache TTL**: 2 hours for video context storage
-- **Concurrent Requests**: 5 simultaneous Gemini API calls
-- **Cache Limits**: 1000 chats max, 25 videos per chat
-
-## Monitoring
-
-### Health Checks
-
-- **Health endpoint**: `http://localhost:8080/health`
-- **Ping endpoint**: `http://localhost:8080/ping`
-
-### Metrics (Prometheus)
-
-Available at `http://localhost:8000`:
-
-- `telegram_bot_requests_total` - Request counter by command and status
-- `telegram_bot_processing_seconds` - Processing time histogram by operation
-- `gemini_tokens_total` - Token usage counter by type (input/output)
-
-### Logs
-
-JSON-structured logs with the following information:
-
-- Timestamp and log level
-- Module and operation context
-- Processing metrics and errors
-- Cache statistics
-
-## Error Handling
-
-The bot handles various error scenarios gracefully:
-
-- **Invalid URLs**: Clear error messages with format examples
-- **Missing Transcripts**: Informative messages about caption availability
-- **Rate Limits**: Exponential backoff with user notifications
-- **Content Safety**: Gemini safety filter integration
-- **Timeouts**: Graceful timeout handling with retry logic
-- **YouTube Blocking**: Uses yt-dlp with proper headers to bypass bot detection
-
-## Performance
-
-### Processing Pipeline
-
-1. **URL Validation** (< 1ms)
-2. **Video Info Extraction** (1-3 seconds) - Uses yt-dlp for metadata
-3. **Transcript Fetch** (2-5 seconds) - Subtitle extraction with timing
-4. **Text Cleaning** (< 100ms)
-5. **AI Summarization** (5-15 seconds) - Gemma 3 27B
-6. **Video Context Caching** (< 10ms) - Comprehensive metadata storage
-
-### Optimization Features
-
-- **Async I/O**: Non-blocking operations throughout
-- **Semaphore Limits**: Prevents API rate limit violations (5 concurrent)
-- **LRU Caching**: Efficient memory usage with TTL and video context storage
-- **Chunking**: Handles large transcripts via map-reduce (25k token chunks)
-- **Connection Pooling**: Reused HTTP connections
-- **Smart Retry Logic**: Exponential backoff for rate limits and timeouts
+- Videos must have captions/subtitles available
+- Maximum video length: 3 hours
+- Only HTTPS URLs are accepted for security
+- Some videos may be blocked due to content policies
 
 ## Development
 
-### Project Structure
+### Local Development
 
-```
-youtube-content-summarizer/
-├── bot.py                 # Main application entry point
-├── handlers.py            # Telegram bot handlers
-├── youtube.py             # YouTube transcript processing
-├── gemini.py              # Google Gemini AI integration
-├── cache.py               # In-memory caching system
-├── utils.py               # Utility functions
-├── requirements.txt       # Python dependencies
-├── Dockerfile            # Container configuration
-├── docker-compose.yml    # Deployment configuration
-├── env.example           # Environment template
-└── README.md             # This file
+1. Install dependencies:
+
+```bash
+pip install -r requirements.txt
 ```
 
-### Key Components
+2. Set environment variables:
 
-- **VideoContext Storage**: Comprehensive video metadata with transcript data
-- **yt-dlp Integration**: Robust YouTube data extraction bypassing restrictions
-- **Gemma 3 27B**: Latest model with improved performance
-- **Multi-level Caching**: Per-chat LRU caches with global chat management
-- **Context-aware Q&A**: Uses video metadata for better question answering
-- **Production Monitoring**: Health checks, metrics, and structured logging
-
-### Dependencies
-
+```bash
+export BOT_TOKEN=your_bot_token
+export GEMINI_API_KEY=your_gemini_key
+export PROXY_URL=socks5://localhost:1080  # If using WARP locally
 ```
-python-telegram-bot[all]==20.7
-yt-dlp==2024.12.13
-google-generativeai==0.8.3
-aiohttp==3.9.1
-tenacity==8.2.3
-prometheus-client==0.19.0
-python-dotenv==1.0.0
+
+3. Run the bot:
+
+```bash
+python bot.py
 ```
 
 ### Testing
 
-Run basic functionality tests:
-
 ```bash
-# Test URL validation
-python -c "from utils import extract_video_id; print(extract_video_id('https://youtu.be/dQw4w9WgXcQ'))"
+# Run tests (when implemented)
+python -m pytest tests/
 
-# Test transcript cleaning
-python -c "from utils import clean_transcript_text; print(clean_transcript_text('[Music] Hello world [Applause]'))"
+# Check code quality
+python -m flake8 .
+python -m black .
 ```
 
-## Deployment
+## Configuration
 
-### Production Considerations
+### Environment Variables
 
-1. **Resource Limits**: Set appropriate memory/CPU limits
-2. **Monitoring**: Deploy with metrics collection
-3. **Logging**: Centralized log aggregation
-4. **Health Checks**: Load balancer integration
-5. **Secrets Management**: Secure API key storage
+| Variable           | Description                  | Required | Default         |
+| ------------------ | ---------------------------- | -------- | --------------- |
+| `BOT_TOKEN`        | Telegram bot token           | Yes      | -               |
+| `GEMINI_API_KEY`   | Google Gemini API key        | Yes      | -               |
+| `PROXY_URL`        | Proxy URL for YouTube access | No       | Auto-configured |
+| `WARP_LICENSE_KEY` | WARP+ license key            | No       | -               |
 
-### Scaling
+### Docker Compose Configuration
 
-The bot is designed for single-instance deployment with:
+The `docker-compose.yml` file includes:
 
-- In-memory caching (no external dependencies)
-- Concurrent request handling via semaphores
-- Graceful degradation under high load
-
-For higher scale requirements, consider:
-
-- Multiple bot instances with load balancing
-- External caching (Redis) for shared state
-- Database storage for persistent analytics
+- **WARP Proxy Service**: Handles YouTube access through Cloudflare
+- **Bot Service**: Main application with dependency on WARP
+- **Health Checks**: Automatic service monitoring
+- **Resource Limits**: Memory and CPU constraints
+- **Logging**: JSON-formatted logs with rotation
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"Transcript unavailable"**: Video doesn't have captions or subtitles
-2. **"Rate limit exceeded"**: Temporary API limits, retry automatically with backoff
-3. **"Video too long"**: Videos over 3 hours aren't supported
-4. **"Invalid URL"**: Only HTTPS YouTube URLs accepted
-5. **"Video is private or unavailable"**: Video requires special access or is deleted
-6. **"Processing timeout"**: Large videos may take longer, automatic retry logic applies
+1. **"Transcript Unavailable"**: Video doesn't have captions
+2. **"Video Too Long"**: Video exceeds 3-hour limit
+3. **"Rate Limit"**: Temporary Gemini API limitation
+4. **"Network Error"**: WARP proxy connection issues
 
-### Debug Information
+### WARP Proxy Issues
 
-Check logs for detailed error information:
+If YouTube access fails:
 
-```bash
-docker-compose logs -f youtube-summarizer-bot
-```
-
-Monitor metrics:
+1. Check WARP container status:
 
 ```bash
-curl http://localhost:8080/health
-curl http://localhost:8000/metrics
+docker-compose logs warp
 ```
+
+2. Test WARP connectivity:
+
+```bash
+docker-compose exec warp curl --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace
+```
+
+3. Restart WARP service:
+
+```bash
+docker-compose restart warp
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-Copyright (c) 2025 Pratham Dubey
+## Acknowledgments
 
-## Support
-
-For issues and questions:
-
-1. Check the troubleshooting section
-2. Review logs for error details
-3. Ensure API keys are valid and have sufficient quota
+- [Cloudflare WARP Docker](https://github.com/cmj2002/warp-docker) for proxy solution
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube transcript extraction
+- [Google Gemini](https://ai.google.dev/) for AI summarization
+- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) for Telegram integration

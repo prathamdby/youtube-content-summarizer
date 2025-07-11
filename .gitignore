@@ -249,6 +249,12 @@ outputs/
 lightning_logs/
 .mlflow/
 
+# WARP proxy data
+warp_data/
+
+# Test files
+test_proxy.py
+
 # Jupyter Lab
 .jupyter/
 .local/

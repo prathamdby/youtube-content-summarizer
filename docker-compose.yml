@@ -1,16 +1,47 @@
 services:
+  # Add WARP proxy service
+  warp:
+    image: caomingjun/warp
+    container_name: youtube-summarizer-warp
+    restart: unless-stopped
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    ports:
+      - "1080:1080"
+    environment:
+      - WARP_SLEEP=2
+      # - WARP_LICENSE_KEY= # optional, set if you have WARP+
+    cap_add:
+      - MKNOD
+      - AUDIT_WRITE
+      - NET_ADMIN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - ./warp_data:/var/lib/cloudflare-warp
+    healthcheck:
+      test: [ "CMD", "curl", "--socks5-hostname", "127.0.0.1:1080", "https://cloudflare.com/cdn-cgi/trace" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   youtube-summarizer-bot:
     build: .
     container_name: youtube-summarizer-bot
     restart: unless-stopped
+    depends_on:
+      - warp
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PROXY_URL=socks5://warp:1080 # Use WARP proxy
     ports:
       - "8000:8000" # Prometheus metrics
       - "8080:8080" # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
