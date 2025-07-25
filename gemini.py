@@ -6,7 +6,9 @@ import os
 import asyncio
 import logging
 from typing import List, Optional, Dict, Any
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+from google.genai.errors import APIError
 
 from tenacity import (
     retry,
@@ -44,7 +46,7 @@ class GeminiClient:
     """Async wrapper for Google GenAI with retry logic and chunking support."""
 
     def __init__(
-        self, api_key: Optional[str] = None, model_name: str = "gemma-3-27b-it"
+        self, api_key: Optional[str] = None, model_name: str = "gemini-2.5-flash"
     ):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model_name = model_name
@@ -54,11 +56,8 @@ class GeminiClient:
         if not self.api_key:
             raise GeminiError("GEMINI_API_KEY environment variable is required")
 
-        # Configure the client
-        genai.configure(api_key=self.api_key)
-
-        # Initialize model
-        self.model = genai.GenerativeModel(model_name=self.model_name)
+        # Initialize client with API key
+        self.client = genai.Client(api_key=self.api_key)
 
         logger.info(f"Initialized Gemini client with model: {self.model_name}")
 
@@ -69,34 +68,111 @@ class GeminiClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=60),
     )
-    async def _generate_content_with_retry(self, prompt: str, **kwargs) -> str:
+    async def _generate_content_with_retry(self, prompt: str) -> str:
         """Generate content with retry logic for rate limits and network errors."""
         async with self._semaphore:
             try:
+                # Validate prompt is not empty
+                if not prompt or not prompt.strip():
+                    raise GeminiError("Prompt cannot be empty")
+
                 with Timer("gemini_generation"):
-                    generation_config = genai.types.GenerationConfig(
+                    # Disable all safety settings as requested
+                    safety_settings = [
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_HARASSMENT",
+                            threshold="BLOCK_NONE",
+                        ),
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_HATE_SPEECH",
+                            threshold="BLOCK_NONE",
+                        ),
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            threshold="BLOCK_NONE",
+                        ),
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                            threshold="BLOCK_NONE",
+                        ),
+                        types.SafetySetting(
+                            category="HARM_CATEGORY_CIVIC_INTEGRITY",
+                            threshold="BLOCK_NONE",
+                        ),
+                    ]
+
+                    config = types.GenerateContentConfig(
                         temperature=0.7,
-                        max_output_tokens=kwargs.get("max_output_tokens", 1000),
-                        top_p=0.8,
-                        top_k=40,
+                        safety_settings=safety_settings,
                     )
 
-                    # Use async generation
-                    response = await self.model.generate_content_async(
-                        prompt, generation_config=generation_config
+                    # Ensure prompt is properly formatted and log for debugging
+                    cleaned_prompt = prompt.strip()
+                    logger.debug(
+                        f"Sending prompt to Gemini (length: {len(cleaned_prompt)})"
                     )
 
-                    # Check if response was blocked
-                    if not response.text:
-                        if (
-                            response.prompt_feedback
-                            and response.prompt_feedback.block_reason
-                        ):
+                    # Use async execution with run_in_executor for sync API
+                    loop = asyncio.get_event_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: self.client.models.generate_content(
+                            model=self.model_name,
+                            contents=cleaned_prompt,
+                            config=config,
+                        ),
+                    )
+
+                    # Check if response was blocked or empty
+                    generated_text = None
+                    finish_reason = None
+
+                    if hasattr(response, "text") and response.text:
+                        generated_text = response.text
+                    elif hasattr(response, "candidates") and response.candidates:
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, "finish_reason"):
+                            finish_reason = candidate.finish_reason
+
+                        if hasattr(candidate, "content"):
+                            if (
+                                hasattr(candidate.content, "parts")
+                                and candidate.content.parts
+                            ):
+                                generated_text = candidate.content.parts[0].text
+                            elif hasattr(candidate.content, "text"):
+                                generated_text = candidate.content.text
+                        elif hasattr(candidate, "text"):
+                            generated_text = candidate.text
+
+                    # Handle MAX_TOKENS finish reason specifically
+                    if finish_reason and "MAX_TOKENS" in str(finish_reason):
+                        if generated_text and generated_text.strip():
+                            logger.warning(
+                                f"Response truncated due to MAX_TOKENS limit. Partial response received."
+                            )
+                            return generated_text.strip()
+                        else:
+                            logger.error(
+                                f"MAX_TOKENS reached but no content generated. Consider reducing input size or increasing max_output_tokens."
+                            )
+                            raise GeminiError(
+                                "Response truncated due to token limit - try reducing input size or increasing max_output_tokens"
+                            )
+
+                    if not generated_text or not generated_text.strip():
+                        # Enhanced safety check
+                        if finish_reason and "SAFETY" in str(finish_reason):
                             raise GeminiSafetyError(
-                                f"Content blocked: {response.prompt_feedback.block_reason}"
+                                f"Content blocked by safety filters: {finish_reason}"
                             )
                         else:
-                            raise GeminiError("Empty response from Gemini")
+                            logger.error(
+                                f"No text found in response. Response: {response}"
+                            )
+                            raise GeminiError(
+                                "Empty response from Gemini - no text content found"
+                            )
 
                     # Track token usage
                     if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -107,9 +183,9 @@ class GeminiClient:
                             response.usage_metadata.candidates_token_count or 0
                         )
 
-                    return response.text.strip()
+                    return generated_text.strip()
 
-            except Exception as e:
+            except APIError as e:
                 error_str = str(e).lower()
 
                 # Handle rate limiting
@@ -132,6 +208,9 @@ class GeminiClient:
 
                 logger.error(f"Gemini generation error: {e}")
                 raise GeminiError(f"Generation failed: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+                raise GeminiError(f"Unexpected error: {e}")
 
     def _chunk_text(self, text: str, max_tokens: int = 25000) -> List[str]:
         """
@@ -206,7 +285,7 @@ class GeminiClient:
 
         Args:
             transcript: Full transcript text
-            max_tokens: Maximum tokens for single request (default 120k for Gemma 3 27B)
+            max_tokens: Maximum tokens for single request (default 120k)
 
         Returns:
             Generated summary
@@ -224,9 +303,7 @@ class GeminiClient:
             # If transcript fits in single request, generate summary directly
             if estimated_tokens <= max_tokens:
                 prompt = self._build_single_summary_prompt(transcript)
-                return await self._generate_content_with_retry(
-                    prompt, max_output_tokens=1000
-                )
+                return await self._generate_content_with_retry(prompt)
 
             # For large transcripts, use map-reduce approach
             else:
@@ -239,66 +316,69 @@ class GeminiClient:
             raise GeminiError(f"Failed to generate summary: {str(e)}")
 
     def _build_single_summary_prompt(self, transcript: str) -> str:
-        """Build optimized single summary prompt using advanced design principles."""
+        """Build optimized single summary prompt using modern prompt design principles."""
         return dedent(
-            f"""
-        <role>
-        You are an expert YouTube content analyst and summarization specialist with deep expertise in extracting key insights from video content across all domains including education, entertainment, technology, business, and more.
-        </role>
+            f"""<system>
+You are an expert YouTube Content Analyst specializing in extracting maximum value from video transcripts across all domains. Your role is to transform lengthy video content into actionable, comprehensive summaries that save viewers time while preserving all essential insights.
+</system>
 
-        <task>
-        Your mission is to analyze a YouTube video transcript and create a comprehensive, well-structured summary that captures the essence and value of the content for viewers.
-        </task>
+<objective>
+Analyze the provided YouTube transcript and create a structured, comprehensive summary that captures the complete value proposition of the video for viewers who need to understand the content quickly.
+</objective>
 
-        <instructions>
-        **IMPORTANT:** Follow this exact thinking and analysis process:
+<instructions>
+STEP 1: Content Analysis
+- Read the entire transcript to understand the overarching narrative and key themes
+- Identify the primary subject matter, purpose, and target audience
+- Note critical segments, major transitions, and emphasis points
+- Filter out technical artifacts (timestamps, audio cues like "[Music]", "[Applause]")
 
-        1. **Content Analysis Phase**
-           - First, read through the entire transcript to understand the overall narrative and structure
-           - Identify the primary topic, theme, and purpose of the video
-           - Note any key segments, transitions, or important discussions
+STEP 2: Information Extraction  
+- Extract actionable insights, expert knowledge, and unique perspectives
+- Identify concrete data points, statistics, and evidence presented
+- Note recurring themes and concepts that receive emphasis
+- Capture any practical steps, recommendations, or conclusions
 
-        2. **Information Extraction Phase**
-           - Extract the most valuable and actionable information
-           - Identify recurring themes and emphasis points
-           - Note any expert insights, data points, or unique perspectives shared
+STEP 3: Summary Construction
+- Structure response using the EXACT format specified below
+- Prioritize substance and actionable value over superficial details
+- Ensure each section provides genuine utility to someone who hasn't watched
+- Focus on information that viewers can remember and potentially implement
 
-        3. **Summary Construction Phase**
-           - Structure your response using the EXACT format specified below
-           - Ensure each section provides genuine value to someone who hasn't watched the video
-           - Focus on substance over superficial details
+CRITICAL CONSTRAINTS:
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)
+- Length limit: Under 3000 characters total to fit Telegram message limits
+- Content focus: Substantive information only (ignore filler, small talk, transitions)
+- Writing style: Natural conversational tone as if explaining to a colleague
+</instructions>
 
-        **ALWAYS ignore technical elements** like timestamps, speaker labels, or audio cues (e.g., "[Music]", "[Applause]") - focus exclusively on substantive content.
+<output_format>
+🎯 Main Topic
+[Single clear sentence describing the video's fundamental subject and purpose]
 
-        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
-        </instructions>
+🔑 Key Points
+• [First major insight - specific, actionable, valuable to viewers]
+• [Second major insight - distinct from first, includes relevant details]  
+• [Third major insight - different aspect, focuses on practical value]
+• [Fourth insight if applicable - maintains focus on highest-value content]
+• [Fifth insight if applicable - ensures comprehensive coverage without redundancy]
 
-        <output_format>
-        **CRITICAL:** Structure your summary using this EXACT format with PLAIN TEXT only:
+💡 Key Takeaways
+[2-3 sentences summarizing what viewers should remember and potentially act upon after watching this video. Focus on the "so what" - why this matters and how it can be applied.]
 
-        🎯 Main Topic
-        [One clear sentence describing what this video is fundamentally about]
+📌 Context & Background
+[Relevant background information, broader context, or important references that enhance understanding and help viewers connect this content to related topics or applications.]
 
-        🔑 Key Points
-        • [First major point or insight - be specific and actionable]
-        • [Second major point or insight - include relevant details]
-        • [Third major point or insight - focus on value for viewers]
-        • [Fourth point if applicable - maintain focus on most important content]
-        • [Fifth point if applicable - ensure each point adds distinct value]
+VERIFICATION: Ensure total response is under 3000 characters while maintaining comprehensiveness and value.
+</output_format>
 
-        💡 Key Takeaways
-        [2-3 sentences summarizing what viewers should remember and potentially act upon after watching this video]
+<context>
+<transcript>
+{transcript}
+</transcript>
+</context>
 
-        📌 Context & Background
-        [Relevant background information, references, or context that enhances understanding of the content]
-        </output_format>
-
-        <transcript>
-        {transcript}
-        </transcript>
-
-        **Your analysis and summary (PLAIN TEXT WITH EMOJIS ONLY):**
-        """
+Begin your analysis:"""
         ).strip()
 
     async def _generate_summary_map_reduce(self, transcript: str) -> str:
@@ -323,9 +403,7 @@ class GeminiClient:
             prompt = self._build_chunk_summary_prompt(chunk, i + 1, len(chunks))
 
             try:
-                summary = await self._generate_content_with_retry(
-                    prompt, max_output_tokens=500
-                )
+                summary = await self._generate_content_with_retry(prompt)
                 chunk_summaries.append(summary)
                 logger.info(f"Generated summary for chunk {i+1}/{len(chunks)}")
             except Exception as e:
@@ -340,40 +418,55 @@ class GeminiClient:
     def _build_chunk_summary_prompt(
         self, chunk: str, chunk_num: int, total_chunks: int
     ) -> str:
-        """Build optimized chunk summary prompt."""
+        """Build optimized chunk summary prompt using modern prompt design principles."""
         return dedent(
-            f"""
-        <role>
-        You are an expert content analyst specializing in extracting key insights from video transcript segments.
-        </role>
+            f"""<system>
+You are an expert content analyst specializing in extracting key insights from video transcript segments. Your role is to identify and summarize the most valuable information from each portion of a larger video.
+</system>
 
-        <task>
-        Analyze this segment of a YouTube video transcript (Part {chunk_num} of {total_chunks}) and extract the most important information and insights discussed in this specific portion.
-        </task>
+<objective>
+Analyze this specific segment (Part {chunk_num} of {total_chunks}) of a YouTube video transcript and extract the most important information, insights, and valuable content discussed in this portion.
+</objective>
 
-        <instructions>
-        **IMPORTANT:** Your analysis should:
+<instructions>
+STEP 1: Segment Analysis
+- Focus exclusively on substantive content in this specific segment
+- Ignore timestamps, speaker changes, and audio cues ("[Music]", "[Applause]")
+- Identify main topics, arguments, and insights discussed in this portion
 
-        1. **Focus on substance** - Ignore timestamps, speaker changes, and audio cues
-        2. **Extract key information** - Identify main points, important details, and valuable insights
-        3. **Maintain context** - Remember this is part of a larger video
-        4. **Be comprehensive** - Don't miss important information that might be critical for the overall summary
+STEP 2: Key Information Extraction
+- Extract important facts, expert insights, and actionable information
+- Note significant details that contribute to the video's overall value
+- Capture any data points, examples, or practical recommendations
+- Identify concepts that will be important for understanding the complete video
 
-        **ALWAYS prioritize:** Important facts, expert insights, actionable information, key arguments, and significant details that contribute to the video's overall value.
+STEP 3: Context-Aware Summary
+- Remember this is part of a larger video - maintain context
+- Focus on information that will be crucial for the final comprehensive summary
+- Don't miss important details that might seem minor but are contextually significant
 
-        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
-        </instructions>
+CRITICAL CONSTRAINTS:
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)
+- Length limit: Under 3000 characters to fit Telegram message limits
+- Content focus: High-value information only (skip filler, transitions, tangents)
+- Writing style: Natural conversational tone as if briefing a colleague
+</instructions>
 
-        <transcript_segment>
-        {chunk}
-        </transcript_segment>
+<context>
+<segment_info>
+Current Segment: {chunk_num} of {total_chunks}
+</segment_info>
 
-        **Provide a focused summary of the key information in this segment (PLAIN TEXT WITH EMOJIS ONLY):**
-        """
+<transcript_segment>
+{chunk}
+</transcript_segment>
+</context>
+
+Provide your focused analysis of the key information in this segment:"""
         ).strip()
 
     async def _generate_final_synthesis(self, chunk_summaries: List[str]) -> str:
-        """Generate final synthesis from chunk summaries with enhanced prompt."""
+        """Generate final synthesis from chunk summaries using modern prompt design principles."""
         combined_summaries = "\n\n".join(
             [
                 f"**Segment {i+1}:** {summary}"
@@ -382,88 +475,94 @@ class GeminiClient:
         )
 
         prompt = dedent(
-            f"""
-        <role>
-        You are an expert YouTube content synthesis specialist who excels at creating comprehensive summaries from multiple content segments.
-        </role>
+            f"""<system>
+You are an expert YouTube content synthesis specialist who excels at creating comprehensive, cohesive summaries from multiple content segments. Your role is to weave together segment analyses into a unified, valuable summary that captures the complete video's worth.
+</system>
 
-        <task>
-        Synthesize these segment-by-segment summaries into one cohesive, comprehensive summary that captures the full value of the complete YouTube video.
-        </task>
+<objective>
+Synthesize these segment-by-segment summaries into one comprehensive, cohesive summary that captures the full value proposition of the complete YouTube video for viewers who need to understand the entire content efficiently.
+</objective>
 
-        <instructions>
-        **CRITICAL:** Follow this synthesis process:
+<instructions>
+STEP 1: Integration Analysis
+- Identify overarching themes and concepts that span multiple segments
+- Recognize how different segments build upon each other and connect
+- Map the logical flow and progression of ideas throughout the video
+- Note recurring concepts and how they develop across segments
 
-        1. **Integration Analysis**
-           - Identify overarching themes that span multiple segments
-           - Recognize how different segments build upon each other
-           - Note the logical flow and progression of ideas
+STEP 2: Content Prioritization and Synthesis
+- Extract the most valuable insights from across all segments
+- Eliminate redundancy while preserving all important details and nuances
+- Focus on information that provides genuine, actionable value to viewers
+- Ensure no critical insights are lost in the synthesis process
 
-        2. **Content Prioritization**
-           - Extract the most valuable insights from all segments
-           - Eliminate redundancy while preserving important details
-           - Focus on information that provides genuine value to viewers
+STEP 3: Comprehensive Summary Construction
+- Use the EXACT output format specified below
+- Ensure the summary reads as a cohesive whole, not disconnected parts
+- Make each section substantive, actionable, and comprehensive
+- Focus on what viewers need to know and can act upon
 
-        3. **Final Structure Creation**
-           - Use the EXACT output format specified below
-           - Ensure the summary reads as a cohesive whole, not disconnected parts
-           - Make each section substantive and actionable
+CRITICAL CONSTRAINTS:
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)
+- Length limit: Under 3000 characters total to fit Telegram message limits
+- Content focus: Complete video value (not just segment highlights)
+- Writing style: Natural conversational tone as if summarizing for a colleague
+- Completeness: Must capture the full video's value proposition
+</instructions>
 
-        **ALWAYS ensure** your final summary captures the complete video's value and could stand alone as a comprehensive overview.
+<output_format>
+🎯 Main Topic
+[Clear, comprehensive description of what this entire video covers and its primary purpose]
 
-        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
-        </instructions>
+🔑 Key Points
+• [Most important insight or information from the complete video]
+• [Second key point that adds distinct value and covers different aspects]
+• [Third key point covering another important dimension]
+• [Fourth point if needed - ensure comprehensive coverage without redundancy]
+• [Fifth point if needed - maintain focus on highest-value content for viewers]
 
-        <output_format>
-        **CRITICAL:** Structure your summary using this EXACT format with PLAIN TEXT only:
+💡 Key Takeaways
+[2-3 sentences capturing what viewers should remember and potentially implement from the entire video. Focus on actionable outcomes and practical applications.]
 
-        🎯 Main Topic
-        [Clear, comprehensive description of what this entire video covers]
+📌 Context & Background
+[Relevant context, background information, broader implications, or connections to related topics discussed throughout the video]
 
-        🔑 Key Points
-        • [Most important insight or information from the complete video]
-        • [Second key point that adds distinct value]
-        • [Third key point covering different aspect]
-        • [Fourth point if needed - ensure comprehensive coverage]
-        • [Fifth point if needed - maintain focus on highest-value content]
+VERIFICATION: Ensure total response is under 3000 characters while maintaining comprehensiveness and capturing the complete video's value.
+</output_format>
 
-        💡 Key Takeaways
-        [2-3 sentences capturing what viewers should remember and potentially implement from the entire video]
+<context>
+<segment_summaries>
+{combined_summaries}
+</segment_summaries>
+</context>
 
-        📌 Context & Background
-        [Relevant context, background information, or broader implications discussed in the video]
-        </output_format>
-
-        <segment_summaries>
-        {combined_summaries}
-        </segment_summaries>
-
-        **Your comprehensive synthesis (PLAIN TEXT WITH EMOJIS ONLY):**
-        """
+Begin your comprehensive synthesis:"""
         ).strip()
 
-        return await self._generate_content_with_retry(prompt, max_output_tokens=1000)
+        return await self._generate_content_with_retry(prompt)
 
-    async def generate_brief_summary(self, transcript: str, max_tokens: int = 120000) -> str:
+    async def generate_brief_summary(
+        self, transcript: str, max_tokens: int = 120000
+    ) -> str:
         """Generate a concise 2-3 sentence summary of a transcript."""
         try:
             estimated_tokens = estimate_tokens(transcript)
 
             if estimated_tokens <= max_tokens:
                 prompt = self._build_brief_summary_prompt(transcript)
-                return await self._generate_content_with_retry(prompt, max_output_tokens=300)
+                return await self._generate_content_with_retry(prompt)
 
             # For large transcripts, summarize in chunks then synthesize
             chunks = self._chunk_text(transcript, max_tokens=25000)
             chunk_summaries = []
             for chunk in chunks:
                 p = self._build_brief_summary_prompt(chunk)
-                chunk_summaries.append(
-                    await self._generate_content_with_retry(p, max_output_tokens=150)
-                )
+                chunk_summaries.append(await self._generate_content_with_retry(p))
 
-            synthesis_prompt = self._build_brief_synthesis_prompt("\n\n".join(chunk_summaries))
-            return await self._generate_content_with_retry(synthesis_prompt, max_output_tokens=300)
+            synthesis_prompt = self._build_brief_synthesis_prompt(
+                "\n\n".join(chunk_summaries)
+            )
+            return await self._generate_content_with_retry(synthesis_prompt)
 
         except (GeminiSafetyError, GeminiRateLimitError):
             raise
@@ -477,12 +576,13 @@ class GeminiClient:
             f"""
         Summarize the following YouTube transcript in no more than three sentences.
         Use PLAIN TEXT with emojis and no markdown formatting.
+        Keep your response under 300 characters to fit within Telegram's message limits.
 
         <transcript>
         {transcript}
         </transcript>
 
-        **Concise summary (PLAIN TEXT WITH EMOJIS ONLY):**
+        **Concise summary (PLAIN TEXT WITH EMOJIS ONLY, under 300 characters):**
         """
         ).strip()
 
@@ -491,12 +591,13 @@ class GeminiClient:
         return dedent(
             f"""
         Combine these short summaries into one concise overview (max three sentences).
+        Keep your response under 300 characters to fit within Telegram's message limits.
 
         <summaries>
         {summaries}
         </summaries>
 
-        **Final concise summary (PLAIN TEXT WITH EMOJIS ONLY):**
+        **Final concise summary (PLAIN TEXT WITH EMOJIS ONLY, under 300 characters):**
         """
         ).strip()
 
@@ -528,9 +629,7 @@ class GeminiClient:
             else:
                 prompt = self._build_transcript_qa_prompt(transcript, safe_question)
 
-            answer = await self._generate_content_with_retry(
-                prompt, max_output_tokens=800
-            )
+            answer = await self._generate_content_with_retry(prompt)
             logger.info("Generated answer for user question")
 
             return answer
@@ -542,138 +641,112 @@ class GeminiClient:
             raise GeminiError(f"Failed to answer question: {str(e)}")
 
     def _build_transcript_qa_prompt(self, transcript: str, question: str) -> str:
-        """Build optimized Q&A prompt for full transcript."""
+        """Build optimized Q&A prompt for full transcript using modern design principles."""
         return dedent(
-            f"""
-        <role>
-        You are an expert YouTube video analyst with exceptional ability to answer questions about video content accurately and helpfully.
-        </role>
+            f"""<system>
+You are an expert YouTube Video Intelligence Analyst with exceptional ability to answer questions about video content with precision and helpfulness. Your role is to analyze video transcripts and provide accurate, comprehensive answers based exclusively on the content presented.
+</system>
 
-        <task>
-        Answer a user's question about a YouTube video by analyzing the complete transcript and providing a precise, informative response.
-        </task>
+<objective>
+Answer the user's specific question about this YouTube video by thoroughly analyzing the transcript and providing the most accurate, helpful response possible based solely on the video content.
+</objective>
 
-        <instructions>
-        **IMPORTANT:** Follow this analysis process:
+<instructions>
+STEP 1: Question Analysis
+- Carefully parse what the user is asking and identify the specific information they need
+- Determine the scope of information required (specific facts, general concepts, examples, etc.)
+- Assess whether this requires direct quotes, summarization, or interpretation
 
-        1. **Question Understanding**
-           - Carefully analyze what the user is asking
-           - Identify the specific type of information they need
-           - Determine the scope and depth of answer required
+STEP 2: Content Search and Analysis
+- Systematically search through the transcript for all relevant information
+- Identify specific details, examples, explanations, or data points that address the question
+- Note the context around relevant information to ensure accurate interpretation
+- Collect supporting evidence and examples when available
 
-        2. **Content Analysis**
-           - Search through the transcript for relevant information
-           - Identify all content that relates to the question
-           - Note specific details, examples, or explanations provided
+STEP 3: Response Construction
+- Provide a direct, clear answer based exclusively on video content
+- Include specific details, examples, and relevant context when available
+- Structure the response to be comprehensive yet concise
+- Acknowledge any limitations in the available information
 
-        3. **Response Construction**
-           - Provide a direct, clear answer based on the video content
-           - Include specific details and examples when available
-           - Acknowledge limitations if the information isn't fully covered
+CRITICAL CONSTRAINTS:
+- Information source: EXCLUSIVELY the provided transcript (NO external knowledge)
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)
+- Length limit: Under 2500 characters to fit Telegram message limits with headers/footers
+- Content focus: Direct answers with supporting details from the video
+- Writing style: Natural conversational tone as if explaining to a colleague
 
-        **ALWAYS base your response** exclusively on the video content. **NEVER add** external information not present in the transcript.
+RESPONSE GUIDELINES:
+- If information is clearly available: Provide comprehensive answer with specific details and examples
+- If information is partially available: Share what's available and clearly indicate limitations
+- If information is missing: State clearly that the topic isn't covered and explain what the video does discuss
+</instructions>
 
-        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
+<context>
+<transcript>
+{transcript}
+</transcript>
 
-        <if_information_available>
-        If the transcript contains clear information to answer the question:
-        - Provide a comprehensive, detailed answer
-        - Include specific examples or details mentioned
-        - Quote or reference relevant parts when helpful
-        </if_information_available>
+<user_question>
+{question}
+</user_question>
+</context>
 
-        <if_information_unclear>
-        If the answer isn't completely clear from the transcript:
-        - Provide what information is available
-        - Clearly indicate what aspects are unclear or not covered
-        - Suggest what additional information would be needed
-        </if_information_unclear>
-
-        <if_information_missing>
-        If the transcript doesn't contain information to answer the question:
-        - Clearly state that the information isn't covered in this video
-        - Briefly explain what topics the video does cover instead
-        - Acknowledge the limitation directly and helpfully
-        </if_information_missing>
-        </instructions>
-
-        <transcript>
-        {transcript}
-        </transcript>
-
-        <user_question>
-        {question}
-        </user_question>
-
-        **Your precise, helpful answer based on the video content (PLAIN TEXT WITH EMOJIS ONLY):**
-        """
+Provide your precise answer based on the video content:"""
         ).strip()
 
     def _build_summary_qa_prompt(self, summary: str, question: str) -> str:
-        """Build optimized Q&A prompt for summary-based answers."""
+        """Build optimized Q&A prompt for summary-based questions using modern design principles."""
         return dedent(
-            f"""
-        <role>
-        You are an expert video content analyst specializing in answering questions based on comprehensive video summaries.
-        </role>
+            f"""<system>
+You are an expert YouTube Video Intelligence Analyst specializing in answering questions based on video summaries. Your role is to provide accurate, helpful answers using the available summary information while being transparent about the scope and limitations of the source material.
+</system>
 
-        <task>
-        Answer a user's question using a detailed summary of a YouTube video. Provide the most accurate and helpful response possible given the summary information available.
-        </task>
+<objective>
+Answer the user's specific question about this YouTube video using the provided summary. Deliver the most accurate and helpful response possible based on the summary content, while clearly indicating when information may be limited by the summary format.
+</objective>
 
-        <instructions>
-        **IMPORTANT:** Follow this structured approach:
+<instructions>
+STEP 1: Question Analysis  
+- Parse the user's question to understand exactly what information they're seeking
+- Identify whether the question asks for specific details, general concepts, or practical applications
+- Determine if the question can be fully or partially answered from the summary
 
-        1. **Question Analysis**
-           - Understand exactly what information the user needs
-           - Identify if this is about main topics, specific details, or general insights
+STEP 2: Summary Analysis
+- Systematically review the summary for all information relevant to the question
+- Extract specific details, insights, and examples that address the user's inquiry
+- Note any context or background information that supports the answer
 
-        2. **Summary Review**
-           - Carefully examine the summary for relevant information
-           - Note any details, examples, or insights that address the question
-           - Assess the completeness of available information
+STEP 3: Response Construction
+- Provide a direct, clear answer based on the summary content
+- Include relevant details and examples when available in the summary
+- Be transparent about any limitations due to the summary format
+- Structure the response to be comprehensive yet concise
 
-        3. **Response Delivery**
-           - Provide the most complete answer possible from the summary
-           - Be clear about the source of your information
-           - Acknowledge any limitations due to working from summary rather than full content
+CRITICAL CONSTRAINTS:
+- Information source: EXCLUSIVELY the provided summary (NO external knowledge)
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)
+- Length limit: Under 2500 characters to fit Telegram message limits with headers/footers
+- Content focus: Direct answers with supporting details from the summary
+- Writing style: Natural conversational tone as if explaining to a colleague
 
-        **CRITICAL:** Base your answer exclusively on the provided summary. 
+RESPONSE GUIDELINES:
+- If summary contains clear answer: Provide comprehensive response with available details and context
+- If summary has partial information: Share what's available and acknowledge limitations clearly
+- If information is missing: State that the specific details aren't in the summary and explain what information is available
+</instructions>
 
-        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
+<context>
+<video_summary>
+{summary}
+</video_summary>
 
-        <if_summary_contains_answer>
-        When the summary clearly addresses the question:
-        - Provide a comprehensive answer based on the summary
-        - Reference specific points from the summary
-        - Include relevant details and context
-        </if_summary_contains_answer>
+<user_question>
+{question}
+</user_question>
+</context>
 
-        <if_summary_partially_addresses>
-        When the summary only partially addresses the question:
-        - Share what information is available from the summary
-        - Clearly indicate that this is based on a summary
-        - Note that more details might be available in the full video
-        </if_summary_partially_addresses>
-
-        <if_summary_lacks_info>
-        When the summary doesn't address the question:
-        - Clearly state the limitation
-        - Briefly describe what the video summary does cover
-        - Suggest that the user might need the full video for this specific information
-        </if_summary_lacks_info>
-        </instructions>
-
-        <video_summary>
-        {summary}
-        </video_summary>
-
-        <user_question>
-        {question}
-        </user_question>
-
-        **Your answer based on the video summary (PLAIN TEXT WITH EMOJIS ONLY):**
-        """
+Provide your answer based on the summary content:"""
         ).strip()
 
     async def answer_question_with_context(
@@ -766,9 +839,7 @@ Upload Date: {upload_date}"""
                 safe_question,
             )
 
-            answer = await self._generate_content_with_retry(
-                prompt, max_output_tokens=800
-            )
+            answer = await self._generate_content_with_retry(prompt)
             logger.info("Generated context-aware answer for user question")
 
             return answer
@@ -782,120 +853,153 @@ Upload Date: {upload_date}"""
     def _build_context_qa_prompt(
         self, context_data: Dict[str, Any], content_context: str, question: str
     ) -> str:
-        """Build comprehensive context-aware Q&A prompt."""
+        """Build comprehensive context-aware Q&A prompt using modern design principles."""
         # Build metadata section
         metadata_lines = [
-            f"**Title:** {context_data['title']}",
-            f"**Channel:** {context_data['channel']}",
-            f"**Duration:** {context_data['duration_str']}",
-            f"**Upload Date:** {context_data['upload_date']}",
+            f"Title: {context_data['title']}",
+            f"Channel: {context_data['channel']}",
+            f"Duration: {context_data['duration_str']}",
+            f"Upload Date: {context_data['upload_date']}",
         ]
 
         if context_data["view_count"]:
-            metadata_lines.append(f"**View Count:** {context_data['view_count']:,}")
+            metadata_lines.append(f"View Count: {context_data['view_count']:,}")
 
         if context_data["categories"]:
             metadata_lines.append(
-                f"**Categories:** {', '.join(context_data['categories'])}"
+                f"Categories: {', '.join(context_data['categories'])}"
             )
 
         if context_data["tags"]:
-            metadata_lines.append(f"**Tags:** {', '.join(context_data['tags'])}")
+            metadata_lines.append(f"Tags: {', '.join(context_data['tags'])}")
 
         if context_data["description"]:
-            metadata_lines.append(f"**Description:** {context_data['description']}...")
+            metadata_lines.append(f"Description: {context_data['description']}...")
 
         metadata_section = "\n".join(metadata_lines)
 
         return dedent(
-            f"""
-        <role>
-        You are an expert YouTube video intelligence analyst with comprehensive knowledge across all domains. You excel at answering questions by leveraging both video metadata and content to provide the most accurate and complete responses possible.
-        </role>
+            f"""<system>
+You are an expert YouTube Video Intelligence Analyst with comprehensive ability to answer questions about videos using all available information sources. Your role is to provide accurate, helpful answers by strategically utilizing video metadata, summaries, and contextual information to best serve the user's needs.
+</system>
 
-        <task>
-        Answer a user's question about a YouTube video using ALL available information including detailed metadata and video content. Provide the most comprehensive and accurate answer possible.
-        </task>
+<objective>
+Answer the user's specific question about this YouTube video using the optimal combination of available information sources (metadata, summary, and context). Provide the most accurate and comprehensive response possible while being transparent about your information sources and any limitations.
+</objective>
 
-        <instructions>
-        **CRITICAL:** Follow this comprehensive analysis process:
+<instructions>
+STEP 1: Question Classification and Analysis
+- Analyze the user's question to determine the type of information needed
+- Classify whether this is a metadata question (title, creator, duration), content question (what's discussed), or analytical question (insights, applications)
+- Determine which information sources will be most relevant and reliable
 
-        1. **Question Classification**
-           - Determine if this is about metadata (title, channel, views, etc.)
-           - Identify if this requires content analysis (topics discussed, specific information)
-           - Assess if both metadata and content are needed for a complete answer
+STEP 2: Multi-Source Information Gathering
+- For metadata questions: Prioritize video metadata as the primary source
+- For content questions: Use the summary as the primary source with metadata for context
+- For analytical questions: Combine summary insights with metadata context
+- Systematically extract all relevant information from the appropriate sources
 
-        2. **Information Integration**
-           - Use video metadata for context and basic information
-           - Leverage video content for substantive answers about topics discussed
-           - Combine both sources when they provide complementary information
+STEP 3: Integrated Response Construction
+- Synthesize information from multiple sources into a coherent, comprehensive answer
+- Provide specific details and examples when available
+- Structure the response to directly address the user's question
+- Be transparent about which sources provided the information and any limitations
 
-        3. **Response Optimization**
-           - Prioritize accuracy by citing your information sources
-           - Provide specific details and examples when available
-           - Give comprehensive answers that fully address the user's need
+CRITICAL CONSTRAINTS:
+- Information sources: ONLY the provided metadata, summary, and available context (NO external knowledge)
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)  
+- Length limit: Under 2500 characters to fit Telegram message limits with headers/footers
+- Content focus: Direct answers using the best available information sources
+- Writing style: Natural conversational tone as if explaining to a colleague
 
-        **ALWAYS use ALL available information** to provide the most complete answer possible.
+SOURCE PRIORITIZATION GUIDELINES:
+- Basic video info (title, creator, duration): Use metadata as authoritative source
+- Content and topics discussed: Use summary as primary source with metadata context
+- Detailed insights and analysis: Rely primarily on summary content
+- Missing information: Clearly state what isn't available and explain what information is provided
+</instructions>
 
-        **CRITICAL OUTPUT REQUIREMENT:** Your response must be in PLAIN TEXT format only. Use emojis for visual appeal but NO markdown formatting, NO bold text, NO asterisks, NO special characters for formatting. Write naturally as if you're explaining to someone in a conversation.
+<context>
+<video_metadata>
+{metadata_section}
+</video_metadata>
 
-        <metadata_questions>
-        For questions about basic video information (title, creator, duration, etc.):
-        - Use the metadata as the primary source
-        - Reference the content if it provides additional context
-        - Provide accurate, specific details
-        </metadata_questions>
+<video_content>
+{content_context}
+</video_content>
 
-        <content_questions>
-        For questions about topics, information, or content discussed:
-        - Use the video content as the primary source
-        - Reference metadata for additional context when relevant
-        - Provide detailed answers with specific examples
-        </content_questions>
+<user_question>
+{question}
+</user_question>
+</context>
 
-        <comprehensive_questions>
-        For questions requiring both metadata and content:
-        - Integrate information from both sources seamlessly
-        - Provide a holistic answer that addresses all aspects
-        - Cite your sources appropriately
-        </comprehensive_questions>
+Provide your comprehensive answer using the best available information sources:"""
+        ).strip()
 
-        <if_complete_info_available>
-        When you have complete information to answer the question:
-        - Provide a comprehensive, detailed response
-        - Include specific examples and details
-        - Reference both metadata and content as appropriate
-        </if_complete_info_available>
+    def _build_general_context_qa_prompt(
+        self, metadata: Dict[str, Any], summary: str, question: str
+    ) -> str:
+        """Build optimized general Q&A prompt using modern design principles."""
+        return dedent(
+            f"""<system>
+You are an expert YouTube Video Intelligence Analyst with comprehensive ability to answer questions about videos using all available information sources. Your role is to provide accurate, helpful answers by strategically utilizing video metadata, summaries, and contextual information to best serve the user's needs.
+</system>
 
-        <if_partial_info_available>
-        When you have partial information:
-        - Share all available relevant information
-        - Clearly indicate what you can determine from the available data
-        - Note what additional information might be needed
-        </if_partial_info_available>
+<objective>
+Answer the user's specific question about this YouTube video using the optimal combination of available information sources (metadata, summary, and context). Provide the most accurate and comprehensive response possible while being transparent about your information sources and any limitations.
+</objective>
 
-        <if_insufficient_info>
-        When the available information is insufficient:
-        - Clearly state the limitation
-        - Explain what information you do have access to
-        - Suggest how the user might find the specific information they need
-        </if_insufficient_info>
-        </instructions>
+<instructions>
+STEP 1: Question Classification and Analysis
+- Analyze the user's question to determine the type of information needed
+- Classify whether this is a metadata question (title, creator, duration), content question (what's discussed), or analytical question (insights, applications)
+- Determine which information sources will be most relevant and reliable
 
-        <video_metadata>
-        {metadata_section}
-        </video_metadata>
+STEP 2: Multi-Source Information Gathering
+- For metadata questions: Prioritize video metadata as the primary source
+- For content questions: Use the summary as the primary source with metadata for context
+- For analytical questions: Combine summary insights with metadata context
+- Systematically extract all relevant information from the appropriate sources
 
-        <video_content>
-        {content_context}
-        </video_content>
+STEP 3: Integrated Response Construction
+- Synthesize information from multiple sources into a coherent, comprehensive answer
+- Provide specific details and examples when available
+- Structure the response to directly address the user's question
+- Be transparent about which sources provided the information and any limitations
 
-        <user_question>
-        {question}
-        </user_question>
+CRITICAL CONSTRAINTS:
+- Information sources: ONLY the provided metadata, summary, and available context (NO external knowledge)
+- Output format: PLAIN TEXT with emojis only (NO markdown, bold, asterisks, or special formatting)  
+- Length limit: Under 2500 characters to fit Telegram message limits with headers/footers
+- Content focus: Direct answers using the best available information sources
+- Writing style: Natural conversational tone as if explaining to a colleague
 
-        **Your comprehensive answer using all available information (PLAIN TEXT WITH EMOJIS ONLY):**
-        """
+SOURCE PRIORITIZATION GUIDELINES:
+- Basic video info (title, creator, duration): Use metadata as authoritative source
+- Content and topics discussed: Use summary as primary source with metadata context
+- Detailed insights and analysis: Rely primarily on summary content
+- Missing information: Clearly state what isn't available and explain what information is provided
+</instructions>
+
+<context>
+<video_metadata>
+Title: {metadata.get('title', 'Not available')}
+Creator: {metadata.get('creator', 'Not available')}
+Duration: {metadata.get('duration', 'Not available')}
+View Count: {metadata.get('view_count', 'Not available')}
+Upload Date: {metadata.get('upload_date', 'Not available')}
+</video_metadata>
+
+<video_summary>
+{summary}
+</video_summary>
+
+<user_question>
+{question}
+</user_question>
+</context>
+
+Provide your comprehensive answer using the best available information sources:"""
         ).strip()
 
 

@@ -426,6 +426,31 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # Combine header + escaped answer + footer
         response_message = header_message + escaped_answer + footer_message
+        
+        # Handle Telegram's 4096 character limit
+        if len(response_message) > 4096:
+            # Calculate available space for answer content
+            header_footer_length = len(header_message) + len(footer_message)
+            available_space = 4096 - header_footer_length - 50  # Leave some buffer
+            
+            # Truncate the answer if too long
+            if available_space > 100:  # Only truncate if we have reasonable space
+                truncated_answer = escaped_answer[:available_space]
+                # Find the last complete sentence to avoid cutting mid-sentence
+                last_period = truncated_answer.rfind('\\.')
+                last_exclamation = truncated_answer.rfind('\\!')  
+                last_question = truncated_answer.rfind('\\?')
+                
+                # Use the latest sentence ending, or fallback to character limit
+                last_sentence_end = max(last_period, last_exclamation, last_question)
+                if last_sentence_end > available_space // 2:  # Ensure we don't cut too much
+                    truncated_answer = truncated_answer[:last_sentence_end + 2]  # +2 to include the escaped punctuation
+                
+                truncated_answer += "\\.\\.\\.\n\n*\\[Response truncated due to length\\]*"
+                response_message = header_message + truncated_answer + footer_message
+            else:
+                # If no reasonable space, send a simpler error message
+                response_message = f"❌ **Response Too Long**\n\nThe AI response was too long for Telegram\\. Please ask a more specific question\\.\n\n❓ **Your question:** {sanitize_text(user_question)}"
 
         await thinking_message.edit_text(
             response_message, parse_mode=ParseMode.MARKDOWN_V2
